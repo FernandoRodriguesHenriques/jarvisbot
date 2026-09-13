@@ -15,17 +15,13 @@ def calc_score(symbol):
         e50 = close.ewm(span=50).mean().iloc[-1]
         e200 = close.ewm(span=200).mean().iloc[-1]
         price = close.iloc[-1]
-        score = 0
-        direcao = None
-        if e9>e21>e50>e200 and price>e9: score=75; direcao="BUY"
-        elif e9<e21<e50<e200 and price<e9: score=75; direcao="SELL"
-        else: return None
-        return {"ativo":symbol,"score":score,"sinal":direcao,"preco":round(float(price),2)}
+        if e9>e21>e50>e200 and price>e9: return {"ativo":symbol,"score":75,"sinal":"BUY","preco":round(float(price),2)}
+        if e9<e21<e50<e200 and price<e9: return {"ativo":symbol,"score":75,"sinal":"SELL","preco":round(float(price),2)}
+        return None
     except: return None
 
 @app.route("/")
-def home():
-    return jsonify({"status":"JARVIS ONLINE","mensagem":"acesse /scanner"})
+def home(): return jsonify({"status":"JARVIS ONLINE","link":"/scanner"})
 
 @app.route("/scanner")
 def scanner():
@@ -33,8 +29,7 @@ def scanner():
     for a in ATIVOS:
         s=calc_score(a)
         if s: res.append(s)
-    res = sorted(res, key=lambda x: x['score'], reverse=True)
-    return jsonify(res)
+    return jsonify(sorted(res, key=lambda x: x['score'], reverse=True))
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0", port=10000)
+# pra gunicorn achar
+application = app
