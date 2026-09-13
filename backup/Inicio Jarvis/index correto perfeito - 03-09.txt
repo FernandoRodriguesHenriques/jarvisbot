@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"><title>JARVIS V6.5 CONSERVADORA</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0e0e12;color:#e0e0e0;font-family:Arial, sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.main{flex:1;display:flex;overflow:hidden}
+.chart{flex:1;background:#000;position:relative}
+.side{width:330px;background:#15151d;border-left:1px solid #222;display:flex;flex-direction:column;overflow-y:auto;padding:8px;gap:8px}
+.card{background:#1e1e26;border-radius:10px;padding:10px;border:1px solid #2a2a35}
+.title{font-size:10px;opacity:.5;letter-spacing:1px;margin-bottom:6px;font-weight:700}
+.row{display:flex;justify-content:space-between;font-size:11px;margin:3px 0;align-items:center}
+.signal{font-size:22px;font-weight:900;text-align:center;padding:12px;border-radius:8px;margin-top:6px}
+.CALL{background:#00ff88;color:#000}.PUT{background:#ff3b3b;color:#fff}.AGUARDAR{background:#2a2a35;color:#aaa}
+.bot-head{display:flex;justify-content:space-between;align-items:center}
+.switch{position:relative;display:inline-block;width:36px;height:20px}.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#333;border-radius:20px;transition:.3s}
+.slider:before{position:absolute;content:"";height:14px;width:14px;left:3px;bottom:3px;background:white;border-radius:50%;transition:.3s}
+input:checked+.slider{background:#00ff88} input:checked+.slider:before{transform:translateX(16px)}
+select{background:#0e0e12;color:#fff;border:1px solid #333;padding:6px;border-radius:6px;width:100%;font-size:11px}
+.tf{background:#222;color:#fff;border:1px solid #333;padding:4px 8px;border-radius:5px;font-size:10px;cursor:pointer}
+.tf.active{background:#fff;color:#000;font-weight:900}
+.badge{padding:2px 8px;border-radius:10px;font-weight:900;font-size:10px}
+.badge-off{background:#333;color:#aaa}.badge-on{background:#00ff88;color:#000}
+.badge-aten{background:#ffcc00;color:#000}
+.bottom{height:70px;background:#0e0e12;border-top:1px solid #222;display:flex;gap:8px;padding:8px;align-items:center}
+.lot-box{background:#1e1e26;border:1px solid #333;border-radius:6px;padding:6px 8px;min-width:140px}
+.lot-box input{background:transparent;border:0;color:#fff;width:50px;font-size:12px;outline:none}
+.btn{flex:1;height:54px;border:none;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer}
+.btnCall{background:#00c853;color:#000}.btnPut{background:#ff3b3b;color:#fff}
+</style>
+</head>
+<body>
+<div class="main">
+<div class="chart" id="tv"></div>
+<div class="side">
+<div class="card">
+<div class="bot-head"><span class="title" style="margin:0">BOT AUTOMATICO</span><label class="switch"><input type="checkbox" id="bot"><span class="slider"></span></label></div>
+<div style="display:flex;gap:6px;margin-top:8px">
+<select id="botLote"><option value="0.01">Lote 0.01</option><option value="0.10" selected>Lote 0.10</option><option value="0.20">Lote 0.20</option></select>
+<select id="botConf"><option value="70">Conf. 70% Min</option><option value="80" selected>Conf. 80% Min</option><option value="85">Conf. 85% Min</option></select>
+</div>
+<div class="row" style="margin-top:6px"><span>Trades hoje</span><b id="tradesHoje">0</b></div>
+<div class="row"><span>Status</span><span class="badge badge-off" id="botStatus">OFF</span></div>
+</div>
+
+<div class="card">
+<div class="title">ATIVOS (7 OFICIAIS)</div>
+<select id="sym"><option value="XAUUSDm" selected>XAUUSDm - OURO</option><option value="EURUSDm">EURUSDm</option><option value="GBPUSDm">GBPUSDm</option><option value="USDJPYm">USDJPYm</option><option value="BTCUSDm">BTCUSDm</option><option value="US30m">US30m</option><option value="NAS100m">NAS100m</option></select>
+<div style="display:flex;gap:4px;margin-top:8px"><button class="tf active" data-tf="1" onclick="setTF('1')">1m</button><button class="tf" data-tf="30" onclick="setTF('30')">30m</button><button class="tf" data-tf="60" onclick="setTF('60')">1h</button><button class="tf" data-tf="240" onclick="setTF('240')">4h</button></div>
+</div>
+
+<div class="card">
+<div class="title" style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;background:#00d4ff;border-radius:50%;display:inline-block"></span> MARKET GUARD AO VIVO</div>
+<div class="row"><span>Score</span><b id="guardScore">-- /100</b></div>
+<div class="row"><span>Status</span><b id="guardStatus" class="badge badge-off">--</b></div>
+<div class="row"><span>Spread</span><span id="guardSpread">--</span></div>
+<div class="row"><span>Motivo</span><span id="guardMotivo" style="text-align:right;max-width:140px;font-size:10px">--</span></div>
+</div>
+
+<div class="card">
+<div class="title">ANALISE V6.5 CONSERVADORA</div>
+<div class="row"><span>Preço</span><b id="aPreco">--</b></div>
+<div class="row"><span>EMA 9/21</span><span id="aEma" style="font-size:10px">--</span></div>
+<div class="row"><span>RSI</span><span id="aRsi">--</span></div>
+<div class="row"><span>MACD</span><span id="aMacd">--</span></div>
+<div class="row"><span>BB</span><span id="aBb" style="font-size:10px">--</span></div>
+<div id="aSignal" class="signal AGUARDAR">AGUARDAR</div>
+<div class="row"><span>Confiança</span><b id="aConf">0%</b></div>
+<div class="row"><span>Detalhes</span><span id="aDet" style="text-align:right;max-width:140px;font-size:10px">Coletando... 1/20</span></div>
+</div>
+
+<div class="card"><div class="title">ORDENS</div><div id="ordens" style="font-size:11px;opacity:.6">Nenhuma</div></div>
+</div>
+</div>
+
+<div class="bottom">
+<div class="lot-box"><div style="font-size:9px;opacity:.5">LOTE MANUAL</div><input type="number" id="loteManual" value="0.10" step="0.01"></div>
+<button class="btn btnCall" onclick="doTrade('buy')">CALL ▲<br><span style="font-size:10px">$</span></button>
+<button class="btn btnPut" onclick="doTrade('sell')">PUT ▼<br><span style="font-size:10px">$</span></button>
+</div>
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+let currentTF='1', trades=0, lastTrade=0;
+function loadTV(sym='XAUUSDm'){
+ let map={'XAUUSDm':'OANDA:XAUUSD','EURUSDm':'OANDA:EURUSD','GBPUSDm':'OANDA:GBPUSD','USDJPYm':'OANDA:USDJPY','BTCUSDm':'COINBASE:BTCUSD','US30m':'OANDA:US30USD','NAS100m':'NASDAQ:NDX'};
+ let tvSym=map[sym]||'OANDA:XAUUSD'; document.getElementById('tv').innerHTML='';
+ new TradingView.widget({"autosize":true,"symbol":tvSym,"interval":currentTF,"timezone":"America/Sao_Paulo","theme":"dark","style":"1","locale":"br","container_id":"tv","hide_top_toolbar":false,"withdateranges":false});
+}
+function setTF(tf){currentTF=tf; document.querySelectorAll('.tf').forEach(b=>b.classList.toggle('active',b.dataset.tf==tf)); loadTV(document.getElementById('sym').value);}
+async function doTrade(tipo){
+ let sym=document.getElementById('sym').value; let lote=parseFloat(document.getElementById('loteManual').value)||0.10;
+ try{
+  let r=await fetch('/trade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym,action:tipo,lot:lote})});
+  let j=await r.json();
+  if(j.ok){trades++; document.getElementById('tradesHoje').innerText=trades; document.getElementById('ordens').innerHTML=`<div style="color:#00ff88">${new Date().toLocaleTimeString()} ✅ ${tipo.toUpperCase()} ${sym} Ticket ${j.ticket}</div>`+document.getElementById('ordens').innerHTML;}
+  else{ alert(j.error); }
+ }catch(e){alert(e);}
+}
+async function upd(){
+ try{
+  let sym=document.getElementById('sym').value;
+  let r=await fetch('/analysis?symbol='+sym+'&tf='+currentTF+'&t='+Date.now());
+  let d=await r.json();
+  if(!d.price) return;
+  document.getElementById('aPreco').innerText=d.price;
+  document.getElementById('aEma').innerText=d.ema9+' / '+d.ema21;
+  document.getElementById('aRsi').innerText=d.rsi;
+  document.getElementById('aMacd').innerText=d.macd;
+  document.getElementById('aBb').innerText=d.bb_low+' / '+d.bb_up;
+  document.getElementById('aSignal').innerText=d.signal;
+  document.getElementById('aSignal').className='signal '+d.signal;
+  document.getElementById('aConf').innerText=d.confidence+'%';
+  document.getElementById('aDet').innerText=d.reason||d.collect;
+  document.getElementById('guardScore').innerText=d.guard+' /100';
+  let st=document.getElementById('guardStatus');
+  st.innerText=d.guard_status;
+  if(d.guard_status=='ATENÇÃO'){st.className='badge badge-aten';}
+  else if(d.guard>=80){st.className='badge badge-on'; st.innerText='SEGURO';}
+  else{st.className='badge badge-off';}
+  document.getElementById('guardSpread').innerText=d.spread+' pts (lim 80)';
+  document.getElementById('guardMotivo').innerText=d.guard_msg;
+ }catch(e){}
+}
+setInterval(async()=>{
+ let bot=document.getElementById('bot');
+ let st=document.getElementById('botStatus');
+ if(!bot.checked){st.innerText='OFF'; st.className='badge badge-off'; return;}
+ st.innerText='ON'; st.className='badge badge-on';
+ let signal=document.getElementById('aSignal').innerText.trim();
+ let conf=parseInt(document.getElementById('aConf').innerText)||0;
+ let guard=parseInt(document.getElementById('guardScore').innerText)||0;
+ let confMin=parseInt(document.getElementById('botConf').value)||80;
+ if((signal=='CALL'||signal=='PUT')&&conf>=confMin&&guard>=60&&Date.now()-lastTrade>120000){
+  await doTrade(signal=='CALL'?'buy':'sell'); lastTrade=Date.now();
+ }
+},2500);
+document.getElementById('sym').addEventListener('change',e=>{loadTV(e.target.value);});
+loadTV('XAUUSDm'); setInterval(upd,2000); upd();
+</script>
+</body>
+</html>

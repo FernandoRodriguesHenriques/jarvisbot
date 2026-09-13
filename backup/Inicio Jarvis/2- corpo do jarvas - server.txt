@@ -1,0 +1,191 @@
+Server.py v6.2
+
+import MetaTrader5 as mt5
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from collections import deque
+import math, datetime, os, threading, time, json, urllib.parse
+
+app = Flask(__name__)
+CORS(app)
+mt5.initialize()
+price_history = {}
+
+# --- SEU ZAP CONFIGURADO DIRETO ---
+ZAP_PHONE = "5511954677471"
+ZAP_APIKEY = "7456841"
+REPORT_HOUR = 12
+REPORT_FILE = "C:/jarvis/relatorio_diario.txt"
+TF_MAP = {'1': mt5.TIMEFRAME_M1,'5': mt5.TIMEFRAME_M5,'15': mt5.TIMEFRAME_M15,'30': mt5.TIMEFRAME_M30,'60': mt5.TIMEFRAME_H1}
+
+def ema_calc(data, period):
+    if not data or len(data) < period: return data[-1] if data else 0
+    k = 2/(period+1); e = sum(data[:period])/period
+    for price in data[period:]: e = price*k + e*(1-k)
+    return e
+def sma_calc(data, period):
+    if len(data) < period: return sum(data)/len(data) if data else 0
+    return sum(data[-period:])/period
+def std_calc(data, period):
+    if len(data) < period: return 0
+    sma = sma_calc(data, period); var = sum((x - sma)**2 for x in data[-period:]) / period
+    return math.sqrt(var)
+
+def enviar_whatsapp(mensagem):
+    try:
+        import requests
+        msg_encoded = urllib.parse.quote(mensagem)
+        url = f"https://api.callmebot.com/whatsapp.php?phone={ZAP_PHONE}&text={msg_encoded}&apikey={ZAP_APIKEY}"
+        r = requests.get(url, timeout=15)
+        print(f"ZAP RESPOSTA: {r.text}")
+        return "queued" in r.text or "sent" in r.text.lower()
+    except Exception as e:
+        print(f"Zap erro: {e}")
+        return False
+
+def get_today_deals():
+    hoje = datetime.datetime.now().replace(hour=0,minute=0,second=0)
+    deals = mt5.history_deals_get(hoje, datetime.datetime.now())
+    return deals if deals else []
+def calcular_lucro_hoje():
+    deals = get_today_deals()
+    lucro = 0.0; wins = 0; losses = 0
+    for d in deals:
+        if d.type in [0,1]:
+            lucro += d.profit + d.swap
+            if d.profit > 0: wins += 1
+            elif d.profit < 0: losses += 1
+    return lucro, wins, losses, len(deals)
+def gerar_relatorio():
+    acc = mt5.account_info()
+    lucro_hoje, wins, losses, total = calcular_lucro_hoje()
+    saldo = acc.balance if acc else 0
+    agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    taxa = (wins/total*100) if total>0 else 0
+    rel = f"\n========== RELATORIO JARVIS - {agora} ==========\nSaldo: ${saldo:.2f}\nLucro Hoje: ${lucro_hoje:.2f}\nTrades: {total} (W:{wins}/L:{losses}) Taxa: {taxa:.1f}%\n=============================================\n"
+    print(rel)
+    try:
+        with open(REPORT_FILE, "a", encoding="utf-8") as f: f.write(rel)
+    except: pass
+    msg_zap = f"🤖 *JARVIS 12h* - {agora}\n\n💰 Saldo: ${saldo:.2f}\n📊 Hoje: ${lucro_hoje:.2f}\n📈 Trades: {total} (W:{wins}/L:{losses})\n✅ Taxa: {taxa:.1f}%"
+    enviar_whatsapp(msg_zap)
+    return rel
+
+def scheduler_relatorio():
+    ja_enviou = None
+    while True:
+        agora = datetime.datetime.now()
+        if agora.hour == REPORT_HOUR and agora.minute == 0:
+            if ja_enviou!= agora.date():
+                gerar_relatorio()
+                ja_enviou = agora.date()
+                time.sleep(60)
+        time.sleep(30)
+threading.Thread(target=scheduler_relatorio, daemon=True).start()
+
+@app.route('/balance')
+def balance():
+    acc = mt5.account_info()
+    if acc: return jsonify({"ok": True, "balance": acc.balance, "profit": acc.profit})
+    return jsonify({"ok": False})
+@app.route('/daily_report')
+def daily_report():
+    lucro, wins, losses, total = calcular_lucro_hoje()
+    acc = mt5.account_info()
+    return jsonify({"ok": True, "saldo": acc.balance if acc else 0, "lucro_hoje": lucro, "wins": wins, "losses": losses, "total": total})
+@app.route('/test_whatsapp')
+def test_whatsapp():
+    ok = enviar_whatsapp(f"🤖 Teste JARVIS V6.2 - {datetime.datetime.now().strftime('%H:%M')} - BOT conectado! Relatorio todo dia 12h ativo!")
+    return jsonify({"ok": ok, "phone": ZAP_PHONE})
+@app.route('/generate_report_now')
+def gen_now():
+    rel = gerar_relatorio()
+    return jsonify({"ok": True, "relatorio": rel})
+@app.route('/positions')
+def positions():
+    pos = mt5.positions_get()
+    out=[]
+    if pos:
+        for p in pos: out.append({"ticket": p.ticket, "symbol": p.symbol, "type": "buy" if p.type==0 else "sell", "volume": p.volume, "profit": p.profit})
+    return jsonify({"ok": True, "positions": out})
+@app.route('/analysis')
+def analysis():
+    try:
+        sym = request.args.get('symbol','EURUSDm'); tf_str = request.args.get('tf','1')
+        mt5.symbol_select(sym, True); tick = mt5.symbol_info_tick(sym)
+        if not tick: return jsonify({"ok": False})
+        closes = []
+        if hasattr(mt5, 'copy_rates'):
+            tf = TF_MAP.get(tf_str, mt5.TIMEFRAME_M1)
+            rates = mt5.copy_rates(sym, tf, 0, 100)
+            if rates is not None and len(rates) >= 30: closes = [r['close'] for r in rates]
+        if not closes:
+            key = f"{sym}_{tf_str}"
+            if key not in price_history: price_history[key] = deque(maxlen=200)
+            price_history[key].append(tick.bid); closes = list(price_history[key])
+        if len(closes) < 26:
+            return jsonify({"ok": True, "price": tick.bid, "ema9": tick.bid, "ema21": tick.bid, "rsi": 50, "macd": 0, "macd_signal": 0, "bb_upper": tick.bid, "bb_lower": tick.bid, "bb_mid": tick.bid, "tendencia": "COLETANDO", "forca": f"{len(closes)}/26", "sinal": "AGUARDAR", "confianca": 0, "detalhes": "Coletando..."})
+        ema9 = ema_calc(closes, 9); ema21 = ema_calc(closes, 21); ema12 = ema_calc(closes, 12); ema26 = ema_calc(closes, 26)
+        macd_line = ema12 - ema26
+        macd_series = []
+        for i in range(26, len(closes)):
+            e12 = ema_calc(closes[:i], 12); e26 = ema_calc(closes[:i], 26); macd_series.append(e12 - e26)
+        macd_signal = ema_calc(macd_series, 9) if len(macd_series) >= 9 else macd_line
+        sma20 = sma_calc(closes, 20); std20 = std_calc(closes, 20)
+        bb_upper = sma20 + (std20 * 2); bb_lower = sma20 - (std20 * 2)
+        gains=0; losses=0
+        for i in range(1, 15):
+            if len(closes) > i:
+                diff = closes[-i] - closes[-i-1]
+                if diff>0: gains+=diff
+                else: losses+=-diff
+        rsi = 100 - (100/(1+(gains/(losses if losses!=0 else 1)))) if losses!=0 else 70
+        tendencia = "ALTA" if ema9>ema21 else "BAIXA"
+        pontos_call = 0; pontos_put = 0
+        if ema9 > ema21: pontos_call += 1
+        else: pontos_put += 1
+        if macd_line > macd_signal: pontos_call += 1
+        else: pontos_put += 1
+        if rsi < 35: pontos_call += 1
+        elif rsi > 65: pontos_put += 1
+        if closes[-1] <= bb_lower: pontos_call += 1.5
+        elif closes[-1] >= bb_upper: pontos_put += 1.5
+        sinal = "AGUARDAR"; conf = 50
+        if pontos_call >= 3: sinal = "CALL"; conf = 60 + (pontos_call*10)
+        elif pontos_put >= 3: sinal = "PUT"; conf = 60 + (pontos_put*10)
+        conf = min(95, int(conf))
+        detalhes = []
+        if ema9>ema21: detalhes.append("EMA Alta")
+        else: detalhes.append("EMA Baixa")
+        if macd_line>macd_signal: detalhes.append("MACD Alta")
+        else: detalhes.append("MACD Baixa")
+        if rsi<30: detalhes.append("RSI Fundo")
+        elif rsi>70: detalhes.append("RSI Topo")
+        if closes[-1]<=bb_lower: detalhes.append("BB Fundo")
+        elif closes[-1]>=bb_upper: detalhes.append("BB Topo")
+        return jsonify({"ok": True, "price": float(tick.bid), "ema9": float(ema9), "ema21": float(ema21), "rsi": round(rsi,1), "macd": round(macd_line,6), "macd_signal": round(macd_signal,6), "bb_upper": float(bb_upper), "bb_lower": float(bb_lower), "bb_mid": float(sma20), "tendencia": tendencia, "forca": f"C{pontos_call}xP{pontos_put}", "sinal": sinal, "confianca": conf, "detalhes": ", ".join(detalhes)})
+    except Exception as e:
+        print(f"ERRO: {e}"); return jsonify({"ok": False})
+@app.route('/trade', methods=['POST'])
+def trade():
+    data = request.json; action = data.get('action'); symbol = data.get('symbol','EURUSDm'); lot = float(data.get('lot',0.05))
+    mt5.symbol_select(symbol, True); tick = mt5.symbol_info_tick(symbol)
+    price = tick.ask if action=='buy' else tick.bid
+    type_order = mt5.ORDER_TYPE_BUY if action=='buy' else mt5.ORDER_TYPE_SELL
+    req = {"action": mt5.TRADE_ACTION_DEAL, "symbol": symbol, "volume": lot, "type": type_order, "price": price, "deviation": 50, "magic": 234000, "comment": "JARVIS V6", "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC}
+    result = mt5.order_send(req)
+    if result and result.retcode==mt5.TRADE_RETCODE_DONE: return jsonify({"ok": True, "ticket": result.order})
+    return jsonify({"ok": False, "error": result.comment if result else "erro"}), 400
+@app.route('/close', methods=['POST'])
+def close():
+    ticket=int(request.json.get('ticket')); pos = mt5.positions_get(ticket=ticket)
+    if not pos: return jsonify({"ok": False})
+    p=pos[0]; tipo = mt5.ORDER_TYPE_SELL if p.type==0 else mt5.ORDER_TYPE_BUY
+    tick = mt5.symbol_info_tick(p.symbol); price = tick.bid if p.type==0 else tick.ask
+    req={"action": mt5.TRADE_ACTION_DEAL, "position": p.ticket, "symbol": p.symbol, "volume": p.volume, "type": tipo, "price": price, "deviation": 50, "magic": 0, "comment": "close", "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC}
+    res=mt5.order_send(req)
+    if res and res.retcode==mt5.TRADE_RETCODE_DONE: return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": res.comment if res else "erro"}), 400
+if __name__=='__main__':
+    print("JARVIS V6.2 - ZAP DIRETO ATIVO")
+    app.run(port=5000, debug=False)

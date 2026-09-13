@@ -1,0 +1,13 @@
+{
+  "initial_equity": 10000.0,
+  "final_equity": 16842.844980055164,
+  "net_pnl": 6842.844980055164,
+  "trades": 203,
+  "wins": 138,
+  "losses": 65,
+  "win_rate_pct": 67.98029556650246,
+  "profit_factor": 4.128017420163594,
+  "expectancy_R": 1.0394088669950738,
+  "payoff": 1.9443560312364758,
+  "max_drawdown_pct": -5.1345828105403415
+}

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>JARVIS - Trading</title>
+<script src="https://s3.tradingview.com/tv.js"></script>
+<style>
+body { background:#0f121e; color:#fff; font-family:Arial; margin:0; padding:20px; }
+.header { display:flex; justify-content:space-between; align-items:center; background:#1a1e2a; padding:15px; border-radius:10px; }
+.account-mode-toggle { position:relative; display:flex; background:#10131d; border:1px solid #2a3042; border-radius:8px; padding:3px; width:180px; }
+.mode-btn { flex:1; z-index:2; background:transparent; border:none; color:#7a7f9a; font-weight:700; font-size:12px; padding:8px; cursor:pointer; }
+.mode-btn.active { color:#fff; }
+.mode-indicator { position:absolute; top:3px; left:3px; width:calc(50% - 3px); height:calc(100% - 6px); background:#00c076; border-radius:6px; transition:0.25s; }
+.toggle.real .mode-indicator { transform:translateX(100%); background:#ff3b3b; }
+#balance-value { font-size:22px; font-weight:bold; color:#00c076; }
+#balance-value.real { color:#ff3b3b; }
+#chart { height:500px; margin-top:20px; border-radius:10px; overflow:hidden; }
+.controls { display:flex; gap:10px; margin-top:20px; }
+.controls button { flex:1; padding:18px; font-size:18px; font-weight:bold; border:none; border-radius:10px; cursor:pointer; color:#fff; }
+.call { background:#00c076; } .put { background:#ff3b3b; }
+input { padding:12px; border-radius:8px; border:1px solid #2a3042; background:#1a1e2a; color:#fff; width:120px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="account-mode-toggle" id="mode-toggle">
+    <button class="mode-btn active" data-mode="pratica">PRÁTICA</button>
+    <button class="mode-btn" data-mode="real">REAL</button>
+    <div class="mode-indicator"></div>
+  </div>
+  <div>
+    <div style="font-size:11px; color:#7a7f9a;">SALDO</div>
+    <div id="balance-value">$ 10.000,00</div>
+  </div>
+  <div>
+    <input id="amount" type="number" value="10"> USD
+    <select id="symbol" style="padding:12px; background:#1a1e2a; color:#fff; border-radius:8px; border:1px solid #2a3042;">
+      <option>EURUSD</option><option>GBPUSD</option><option>BTCUSD</option>
+    </select>
+  </div>
+</div>
+
+<div id="chart"></div>
+
+<div class="controls">
+  <button class="call" onclick="trade('call')">CALL ▲</button>
+  <button class="put" onclick="trade('put')">PUT ▼</button>
+</div>
+<div id="log" style="margin-top:15px; font-size:12px; color:#7a7f9a;"></div>
+
+<script>
+const API_URL = "http://127.0.0.1:5000";
+let mode = localStorage.getItem('qx_mode') || 'pratica';
+let demoBalance = parseFloat(localStorage.getItem('demo_bal')) || 10000;
+
+new TradingView.widget({
+  "autosize": true, "symbol": "FX:EURUSD", "interval": "1",
+  "timezone": "America/Sao_Paulo", "theme": "dark", "style": "1",
+  "container_id": "tradingview_chart",
+  "locale": "br"
+});
+
+// Cria div do grafico
+document.getElementById('chart').innerHTML = '<div id="tradingview_chart" style="height:500px"></div>';
+new TradingView.widget({ autosize:true, symbol:"FX:EURUSD", interval:"1", timezone:"America/Sao_Paulo", theme:"dark", container_id:"tradingview_chart" });
+
+function setMode(m) {
+  mode = m; localStorage.setItem('qx_mode', m);
+  document.getElementById('mode-toggle').classList.toggle('real', m==='real');
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active', b.dataset.mode===m));
+  document.getElementById('balance-value').classList.toggle('real', m==='real');
+  if(m==='real') fetchRealBalance(); else updateDemo();
+}
+document.querySelectorAll('.mode-btn').forEach(b=>b.addEventListener('click', ()=>setMode(b.dataset.mode)));
+
+async function fetchRealBalance() {
+  try {
+    const r = await fetch(`${API_URL}/api/balance`);
+    const d = await r.json();
+    document.getElementById('balance-value').textContent = `$ ${d.balance.toFixed(2)} (REAL)`;
+  } catch { document.getElementById('log').textContent = "Erro: deixe o server.py aberto!"; }
+}
+function updateDemo() {
+  document.getElementById('balance-value').textContent = `$ ${demoBalance.toFixed(2)} (PRÁTICA)`;
+}
+async function trade(dir) {
+  const amount = parseFloat(document.getElementById('amount').value);
+  const symbol = document.getElementById('symbol').value;
+  document.getElementById('log').textContent = `Enviando ${dir.toUpperCase()} ${symbol} $${amount} no modo ${mode}...`;
+  
+  if(mode==='pratica') {
+    demoBalance += (Math.random() > 0.45 ? amount*0.87 : -amount);
+    localStorage.setItem('demo_bal', demoBalance);
+    updateDemo();
+    document.getElementById('log').textContent = `Trade ${dir} finalizado na PRÁTICA! Novo saldo: $${demoBalance.toFixed(2)}`;
+  } else {
+    try {
+      const r = await fetch(`${API_URL}/api/trade`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({direction:dir, amount, symbol}) });
+      const d = await r.json();
+      document.getElementById('log').textContent = "Ordem REAL enviada! Veja no MT5. Ticket: " + d.ticket;
+      fetchRealBalance();
+    } catch(e) { document.getElementById('log').textContent = "Erro ao enviar ordem real: " + e; }
+  }
+}
+setMode(mode);
+</script>
+</body>
+</html>

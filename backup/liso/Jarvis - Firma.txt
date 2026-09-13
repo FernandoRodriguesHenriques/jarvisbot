@@ -1,0 +1,1515 @@
+"""JARVIS — MEMÓRIA MESTRA DO PROJETO
+========================================
+
+Documento de continuidade para guardar decisões, arquitetura, ideias, regras e melhorias
+discutidas no projeto JARVIS. Este arquivo deve servir como base para futuras versões,
+correções e expansões.
+
+DATA DE CONSOLIDAÇÃO
+--------------------
+03/09/2026
+
+
+1. VISÃO GERAL DO PROJETO
+--------------------------
+
+O JARVIS é um sistema de análise e automação de trading com foco em:
+
+- Mercado de criptomoedas, inicialmente BTCUSD.
+- Execução através do MetaTrader 5 (MT5).
+- Broker escolhido: Exness.
+- Operação inicialmente em PAPER/DEMO.
+- Evolução futura para execução real somente após validação.
+- Interface profissional em proporção 16:9.
+- Market Guard para monitoramento das condições do mercado.
+- JARVIS Brain para memória operacional e aprendizado baseado nos resultados.
+- Motor de sinais, gestão de risco, análise técnica, histórico, backtest e logs.
+
+Objetivo central:
+Criar um JARVIS que não opere apenas por um sinal isolado, mas que combine
+contexto, estrutura, price action, indicadores, estatística, memória de resultados,
+controle de risco e proteção contra condições ruins de mercado.
+
+
+2. DECISÃO SOBRE O BROKER
+-------------------------
+
+O Quotex foi descartado como base do projeto porque surgiu a preocupação do usuário
+com a confiabilidade/manipulação percebida do preço.
+
+O broker escolhido para o projeto passou a ser a Exness por sua integração com MT5.
+
+Arquitetura adotada:
+
+JARVIS
+  |
+  v
+Python API
+  |
+  v
+MetaTrader 5
+  |
+  v
+Exness
+  |
+  v
+Mercado
+
+Importante:
+- MT5 é o terminal/interface de execução.
+- O preço, liquidez e execução vêm do broker/feed conectado ao MT5.
+- Exness oferece instrumentos de cripto como CFDs.
+- O projeto deve diferenciar claramente CFD de posse real de criptomoeda.
+- Para validação inicial, usar conta DEMO/PAPER.
+
+
+3. MODOS DE OPERAÇÃO
+--------------------
+
+A ideia definida para o projeto:
+
+PAPER
+  -> simulação e observação
+
+DEMO
+  -> execução real dentro da conta demo
+
+REAL
+  -> somente depois de validação rigorosa
+
+Proteção inicial:
+JARVIS_ALLOW_TRADING=false
+
+Enquanto false:
+- JARVIS pode consultar o MT5.
+- JARVIS pode receber cotações.
+- JARVIS pode analisar candles.
+- JARVIS pode consultar conta/posições.
+- JARVIS NÃO deve enviar ordens reais.
+
+
+4. BACKEND JÁ PLANEJADO / IMPLEMENTADO
+---------------------------------------
+
+Foi criada uma base Python usando:
+
+- Flask
+- Flask-CORS
+- python-dotenv
+- MetaTrader5
+
+Endpoints trabalhados:
+
+/
+  -> informações básicas do sistema
+
+/status
+  -> conexão MT5, terminal e conta
+
+/account
+  -> informações da conta
+
+/balance
+  -> saldo, equity, margem, lucro etc.
+
+/tick/<symbol>
+  -> bid, ask, last, spread e informações do ativo
+
+/candles/<symbol>
+  -> candles por timeframe
+
+/positions
+  -> posições abertas
+
+/orders
+  -> ordens
+
+/market-guard/<symbol>
+  -> avaliação do Market Guard
+
+/brain/status
+  -> estado e decisão do JARVIS Brain
+
+/brain/trades
+  -> histórico de trades registrados pelo Brain
+
+/brain/errors
+  -> memória dos erros
+
+/brain/wins
+  -> memória dos padrões vencedores
+
+/brain/log
+  -> log de aprendizagem
+
+/brain/record
+  -> registrar resultado/contexto de um trade
+
+/trade
+  -> fluxo de execução com validação do Market Guard e do Brain
+
+
+5. MARKET GUARD
+---------------
+
+O Market Guard foi criado para analisar as condições do feed recebido através
+do MT5 antes da execução.
+
+Ele NÃO prova sozinho que existe manipulação de preço.
+
+Função correta:
+Detectar condições anormais, risco de execução e mudanças bruscas no ambiente
+de mercado.
+
+Fatores monitorados:
+
+- Spread atual
+- Spread percentual
+- Spread anormal em relação ao contexto recente
+- Idade do último tick
+- Movimento brusco do preço
+- Volume de ticks atípico
+- Profundidade de mercado, quando disponível
+- Condição geral do mercado
+
+Classificação:
+
+NORMAL
+  -> ALLOW
+
+ATENÇÃO
+  -> ALLOW_WITH_CAUTION
+
+RISCO ALTO
+  -> BLOCK
+
+Exemplo conceitual:
+
+Sinal
+  |
+  v
+Market Guard
+  |
+  +--> NORMAL ------> continua
+  |
+  +--> ATENÇÃO -----> continua com cautela
+  |
+  +--> RISCO ALTO --> BLOQUEIA
+
+
+6. PROTEÇÃO DA EXECUÇÃO
+------------------------
+
+Antes de uma ordem:
+
+1. Market Guard
+2. JARVIS Brain
+3. Limites de volume
+4. Limite de posições
+5. order_check()
+6. order_send()
+
+Se Market Guard bloquear:
+A ordem não deve ser enviada.
+
+Se JARVIS Brain bloquear:
+A ordem não deve ser enviada.
+
+Essa estrutura foi pensada para evitar que um sinal forte isolado consiga ignorar
+as outras camadas de proteção.
+
+
+7. JARVIS BRAIN
+---------------
+
+O JARVIS Brain é a memória operacional persistente.
+
+Banco:
+jarvis_memory.db
+
+Tecnologia:
+SQLite
+
+O Brain não é uma "memória de conversa".
+Ele registra dados estruturados de mercado e trades.
+
+Objetivos:
+
+- Registrar cada operação.
+- Registrar contexto da operação.
+- Registrar WIN/LOSS.
+- Registrar sequência de resultados.
+- Identificar padrões recorrentes.
+- Memorizar erros.
+- Memorizar padrões vencedores.
+- Criar score de decisão.
+- Ativar modos de proteção após sequências negativas.
+- Evitar que um único trade altere a estratégia.
+- Dar maior peso a observações recentes.
+- Aprender de forma conservadora.
+
+
+8. MEMÓRIA DE CADA TRADE
+------------------------
+
+Cada operação deve idealmente guardar:
+
+- ticket
+- ativo
+- timeframe
+- estratégia
+- direção
+- entrada
+- saída
+- volume
+- P/L
+- WIN/LOSS
+- score do sinal
+- estado do mercado
+- spread
+- volatilidade
+- score do Market Guard
+- motivo
+- lição
+- contexto adicional
+- timestamp
+
+Exemplo conceitual:
+
+BTCUSD
+M15
+BUY
+Estratégia: EMA_RSI_MACD
+Sinal: 87/100
+Market Guard: 85/100
+Volume: alto
+Contexto: tendência de alta + correção
+Resultado: LOSS
+Motivo: reversão após entrada
+Lição: evitar esse setup sem nova confirmação.
+
+
+9. COMPORTAMENTO APÓS LOSS
+--------------------------
+
+O problema que motivou essa parte do projeto:
+
+O robô poderia tomar um loss e continuar insistindo na mesma linha.
+
+Regra desejada:
+
+LOSS
+  |
+  v
+ANALISAR O CONTEXTO
+  |
+  +--> spread estava ruim?
+  +--> volatilidade estava alta?
+  +--> entrada foi atrasada?
+  +--> sinal estava fraco?
+  +--> houve resistência/suporte?
+  +--> padrão falhou?
+  +--> mercado mudou?
+  |
+  v
+REGISTRAR LIÇÃO
+  |
+  v
+ATUALIZAR MEMÓRIA
+  |
+  v
+REAVALIAR PRÓXIMA ENTRADA
+
+O JARVIS não deve simplesmente repetir a mesma decisão sem considerar o que acabou
+de acontecer.
+
+
+10. COMPORTAMENTO APÓS WIN
+---------------------------
+
+WIN também deve gerar memória.
+
+O objetivo não é aumentar risco automaticamente.
+
+O Brain deve perguntar:
+
+"Quais condições estavam presentes quando esse trade funcionou?"
+
+Exemplos:
+- tendência alinhada
+- correção concluída
+- volume acima da média
+- suporte/resistência favorável
+- padrão forte
+- acionamento correto
+- Market Guard normal
+- timeframe coerente
+
+Depois, essas condições podem ganhar peso estatístico.
+
+
+11. MEMÓRIA DE ERROS
+--------------------
+
+Tabela conceitual:
+error_memory
+
+Exemplo:
+
+Setup: HAMMER
+Ativo: BTCUSD
+Timeframe: M15
+Contexto: tendência sem correção
+Ocorrências: 7
+Losses: 7
+Severidade: alta
+Ação: bloquear ou reduzir score
+
+O objetivo é o JARVIS reconhecer:
+
+"Eu já vi este cenário várias vezes e ele apresenta resultado ruim."
+
+
+12. MEMÓRIA DE PADRÕES VENCEDORES
+---------------------------------
+
+Tabela conceitual:
+win_memory
+
+Exemplo:
+
+HAMMER
+BTCUSD
+M15
+CONTEXTO 4
+SUPORTE
+VOLUME ALTO
+ACIONAMENTO NA MÁXIMA
+
+Trades: 64
+Wins: 45
+Losses: 19
+Win rate: 70,3%
+
+Essa memória deve representar COMBINAÇÕES de condições,
+não somente o nome do candle.
+
+
+13. ESTADO DE SESSÃO
+--------------------
+
+Estados planejados:
+
+NORMAL
+PERFORMANCE
+CAUTION
+PROTECTION
+
+Regras inicialmente propostas:
+
+0–1 loss consecutivo:
+NORMAL / registrar e aprender
+
+2 losses consecutivos:
+CAUTION
+
+3 losses consecutivos:
+PROTECTION
+
+Em PROTECTION:
+- novas entradas podem ser bloqueadas
+- cooldown pode ser ativado
+- exigir nova confirmação para voltar
+
+Cooldown inicial planejado:
+30 minutos
+
+3 wins consecutivos:
+PERFORMANCE
+
+PERFORMANCE NÃO significa:
+"dobrar a mão"
+
+Significa:
+"manter disciplina e reconhecer condições que estão funcionando."
+
+
+14. REGRA CONTRA OVERLEARNING
+-----------------------------
+
+O JARVIS não deve mudar uma estratégia inteira por causa de um único trade.
+
+Princípio:
+
+1 ocorrência
+  -> registrar
+
+5 ocorrências
+  -> observar
+
+20 ocorrências
+  -> considerar padrão com mais confiança
+
+50+ ocorrências
+  -> estatística mais madura para ajuste
+
+A ideia é evitar que o algoritmo fique "nervoso" e mude de comportamento a cada trade.
+
+
+15. PESO DA RECÊNCIA
+--------------------
+
+Os dados recentes devem ter mais peso que dados muito antigos.
+
+Exemplo conceitual:
+
+Trade antigo
+  peso menor
+
+Trade recente
+  peso maior
+
+Isso permite que o JARVIS se adapte às mudanças do mercado sem apagar o histórico.
+
+
+16. CONTEXTO DE MERCADO — IDEIA PRINCIPAL DO VÍDEO
+---------------------------------------------------
+
+A transcrição do vídeo trouxe uma ideia considerada muito importante:
+
+Não operar padrões de candles isoladamente.
+
+O mesmo padrão pode ter comportamento diferente conforme o contexto.
+
+O vídeo apresenta oito contextos:
+
+TENDÊNCIA DE ALTA
+1. tendência + reversão
+2. tendência + continuidade
+3. correção + reversão
+4. correção + continuidade
+
+TENDÊNCIA DE BAIXA
+5. tendência + reversão
+6. tendência + continuidade
+7. repique + reversão
+8. repique + continuidade
+
+Os contextos 4 e 8 foram destacados no material como situações de continuidade após
+uma correção/repique e como contextos de interesse maior para a metodologia apresentada.
+
+Essa ideia deve virar um módulo de software:
+Context Engine.
+
+
+17. CONTEXT ENGINE
+------------------
+
+Novo módulo desejado:
+
+Context Engine
+
+Função:
+determinar em qual contexto o mercado está antes do sinal.
+
+Saídas possíveis:
+
+- tendência de alta
+- tendência de baixa
+- correção
+- repique
+- reversão
+- continuação
+- contexto 1–8
+
+Exemplo:
+
+BTCUSD M15
+
+Tendência:
+ALTA
+
+Correção:
+SIM
+
+Padrão:
+HAMMER
+
+Contexto:
+4 — alta + correção + continuação
+
+Isso é muito mais forte do que simplesmente detectar "HAMMER".
+
+
+18. CANDLE ENGINE
+----------------
+
+Novo módulo desejado:
+
+Candle Engine
+
+Deve transformar descrição visual em regras objetivas.
+
+Dados fundamentais do candle:
+
+- abertura
+- máxima
+- mínima
+- fechamento
+
+A partir deles:
+
+- corpo
+- sombra superior
+- sombra inferior
+- amplitude
+- direção
+- relação corpo/amplitude
+- relação com candles anteriores
+
+
+19. ATR PARA DIMENSIONAR CANDLES
+-------------------------------
+
+O vídeo destaca o uso do ATR (incluindo ATR 21 na metodologia apresentada)
+para evitar subjetividade ao classificar candles como pequenos, médios ou grandes.
+
+Para o JARVIS:
+
+ATR(21)
+
+Pode ser usado para classificar:
+
+Candle pequeno
+Candle médio
+Candle grande
+Candle muito grande
+
+Exemplo conceitual:
+
+ATR21 = 820
+Amplitude do candle = 2460
+
+Ratio = 3,0x
+
+=> candle muito forte
+
+Isso deve virar regra matemática e não julgamento visual.
+
+
+20. VOLUME COMO CONFIRMAÇÃO
+---------------------------
+
+O vídeo também apresenta o volume como fator de confirmação.
+
+Uma referência da transcrição é comparar o volume atual com os últimos 21 volumes.
+
+Para o JARVIS:
+
+volume_atual / média_volume_21
+
+Exemplo:
+
+volume atual = 18.500
+média 21 = 10.000
+
+ratio = 1,85x
+
+=> volume forte
+
+O Brain deve aprender diferenças entre:
+- padrão + volume alto
+- padrão + volume normal
+- padrão + volume baixo
+
+
+21. ACIONAMENTO DO PADRÃO
+-------------------------
+
+O JARVIS não deve necessariamente entrar apenas porque um padrão apareceu.
+
+Etapas:
+
+PADRÃO DETECTADO
+   |
+   v
+AGUARDANDO ACIONAMENTO
+   |
+   v
+ACIONAMENTO
+   |
+   v
+MARKET GUARD
+   |
+   v
+BRAIN
+   |
+   v
+RISK MANAGER
+   |
+   v
+EXECUÇÃO
+
+Muitos padrões podem usar:
+- superação da máxima
+- perda da mínima
+
+O ponto exato deve ser definido conforme o padrão.
+
+
+22. SUPORTE E RESISTÊNCIA
+-------------------------
+
+Outro conceito importante trazido pela transcrição:
+
+Padrão de candle deve ser combinado com:
+- suporte
+- resistência
+- estrutura
+- rompimento
+- rompimento falso
+- reteste
+
+Exemplo:
+
+Tendência:
+ALTA
+
+Correção:
+SIM
+
+Preço:
+próximo de suporte
+
+Padrão:
+HAMMER
+
+Volume:
+ALTO
+
+Acionamento:
+aguardando máxima
+
+Decisão:
+NÃO ENTRAR AINDA.
+
+
+23. ESTRUTURA / PRICE ACTION
+---------------------------
+
+O vídeo reforça que candle é somente uma parte da leitura.
+
+O JARVIS deve eventualmente reconhecer:
+
+- topo
+- fundo
+- pivô de alta
+- pivô de baixa
+- suporte simples
+- suporte complexo
+- resistência simples
+- resistência complexa
+- rompimento
+- rompimento falso
+- consolidação
+- reteste
+
+Isso complementará os padrões de candle.
+
+
+24. MULTI-TIMEFRAME
+-------------------
+
+Outra ideia importante para evoluir o JARVIS:
+
+Não analisar somente um timeframe.
+
+Arquitetura sugerida:
+
+D1
+  -> tendência macro
+
+H4
+  -> estrutura
+
+H1
+  -> contexto
+
+M15
+  -> setup
+
+M5
+  -> acionamento
+
+Exemplo:
+
+D1 -> ALTA
+H4 -> ALTA
+H1 -> CORREÇÃO
+M15 -> HAMMER
+M5 -> ROMPIMENTO DA MÁXIMA
+
+=> confluência elevada
+
+
+25. PADRÕES DE CANDLE A IMPLEMENTAR
+-----------------------------------
+
+Não é necessário começar com os 42 de uma vez.
+
+A recomendação foi começar com um núcleo menor, por exemplo 8–12 padrões,
+implementados de maneira objetiva e com estatística.
+
+Padrões/conceitos mencionados na transcrição incluem:
+
+- Hammer / Martelo
+- Inverted Hammer / Martelo invertido
+- Hanging Man / Enforcado
+- Doji
+- High Wave
+- Marubozu
+- Marubozu de abertura
+- Marubozu de fechamento
+- Harami
+- Harami Cross
+- Engolfo de alta
+- Engolfo de baixa
+- Piercing Pattern / Padrão penetrante
+- Three White Soldiers / Três Soldados Brancos
+- Deliberation
+- Mat Hold
+- Inside Bar
+
+A nomenclatura deve ser padronizada no código.
+
+
+26. FILOSOFIA DE CONTEXTO
+-------------------------
+
+Princípio importante extraído da transcrição:
+
+"O padrão não é a estratégia inteira."
+
+O JARVIS deve tratar o candle como uma peça de um conjunto:
+
+Padrão
++
+Tendência
++
+Correção
++
+Estrutura
++
+Volume
++
+ATR
++
+Suporte/Resistência
++
+Acionamento
++
+Market Guard
++
+Memória
++
+Gestão de risco
+
+
+27. CONFLUENCE SCORE
+--------------------
+
+Foi proposta uma Decision Matrix.
+
+Exemplo conceitual:
+
+Tendência          +20
+Correção           +15
+Padrão             +15
+Suporte            +15
+Volume             +10
+EMA                +10
+Market Guard       +10
+Brain histórico    +08
+
+Depois normalizar para 0–100.
+
+Faixas propostas:
+
+80–100
+  excelente
+
+65–79
+  bom
+
+50–64
+  cautela
+
+<50
+  não operar
+
+
+28. EXPECTANCY > WIN RATE ISOLADO
+---------------------------------
+
+Uma ideia importante do vídeo:
+
+Não olhar somente taxa de acerto.
+
+Também acompanhar:
+
+- Win Rate
+- Profit Factor
+- Expectancy
+- Payoff
+- média dos wins
+- média dos losses
+- R:R
+- frequência
+- drawdown
+
+Exemplo:
+
+Setup A:
+Win Rate 61%
+R:R médio 2,8
+Expectancy positiva
+
+Setup B:
+Win Rate 78%
+R:R médio 0,6
+Expectancy ruim
+
+O JARVIS não deve escolher automaticamente B só porque ele tem maior win rate.
+
+
+29. FREQUÊNCIA DOS PADRÕES
+--------------------------
+
+Padrões raros precisam ser avaliados com cuidado.
+
+Um padrão com 77% de acerto, mas que aparece pouquíssimas vezes,
+não deve automaticamente ter peso maior que um padrão com boa expectativa
+e frequência suficiente.
+
+Portanto guardar:
+
+- frequência
+- quantidade de observações
+- win rate
+- expectancy
+- payoff
+
+
+30. FLEXIBILIDADE CONTROLADA
+----------------------------
+
+O vídeo destaca que na prática os padrões podem apresentar pequenas diferenças,
+mas a flexibilidade deve ser limitada.
+
+Para o JARVIS:
+
+- pequenas variações podem ser aceitas
+- grandes desvios devem invalidar o padrão
+- tolerâncias devem ser parâmetros objetivos
+- jamais deixar a detecção totalmente subjetiva
+
+
+31. RESPOSTA VISUAL IDEAL DO JARVIS
+-----------------------------------
+
+A interface 16:9 desejada deve parecer um terminal profissional de trading.
+
+Elementos planejados:
+
+LADO ESQUERDO
+- Dashboard
+- Mercado
+- Gráficos
+- Operações
+- Posições
+- Ordens
+- Histórico
+- Estratégias
+- Backtest
+- Configurações
+- Logs
+- Ajuda
+
+TOPO
+- conexão
+- Exness
+- conta
+- saldo
+- equity
+- P/L
+- margem
+- horário
+- modo atual
+
+CENTRO
+- gráfico BTCUSD
+- M1
+- M5
+- M15
+- M30
+- H1
+- H4
+- D1
+- indicadores
+- volume
+
+PAINEL DIREITO
+- Novo Trade
+- Manual / Automático
+- Buy / Sell
+- volume
+- SL
+- TP
+
+PAINÉIS INFERIORES
+- Sinais JARVIS
+- Análise Técnica
+- Market Guard
+- Posições Abertas
+- Trades Recentes
+- Atividades do Sistema
+
+NOVOS PAINÉIS A INCLUIR
+
+JARVIS BRAIN
+- estado
+- score
+- wins consecutivos
+- losses consecutivos
+- P/L da sessão
+- memória de erros
+- padrões vencedores
+- motivos da decisão
+
+CONTEXT ENGINE
+- tendência
+- contexto 1–8
+- correção/repique
+- estrutura
+- suporte/resistência
+
+DECISION ENGINE
+- score
+- confluências
+- motivo da decisão
+- entrada / aguardar / bloquear
+
+
+32. EXEMPLO DE DECISÃO DO JARVIS
+--------------------------------
+
+JARVIS DECISION ENGINE
+
+ATIVO:
+BTCUSD
+
+TIMEFRAME:
+M15
+
+CONTEXTO:
+#4 — ALTA + CORREÇÃO
+
+TENDÊNCIA:
+ALTA
+
+PADRÃO:
+HAMMER
+
+SUPORTE:
+CONFIRMADO
+
+VOLUME:
+1,82x MÉDIA 21
+
+ATR:
+0,94x
+
+ACIONAMENTO:
+AGUARDANDO
+
+MARKET GUARD:
+NORMAL
+
+BRAIN:
+HISTÓRICO FAVORÁVEL
+
+CONFIDENCE:
+87/100
+
+DECISÃO:
+AGUARDAR ROMPIMENTO DA MÁXIMA
+
+
+33. FLUXO COMPLETO FUTURO
+--------------------------
+
+                         JARVIS BRAIN
+                              |
+                   memória / aprendizado
+                              |
+          +-------------------+-------------------+
+          |                   |                   |
+          v                   v                   v
+   CONTEXT ENGINE       CANDLE ENGINE       STRUCTURE ENGINE
+          |                   |                   |
+          +-------------------+-------------------+
+                              |
+                            VOLUME
+                              |
+                             ATR
+                              |
+                      MULTI-TIMEFRAME
+                              |
+                   SUPORTE / RESISTÊNCIA
+                              |
+                        ACIONAMENTO
+                              |
+                       MARKET GUARD
+                              |
+                       RISK MANAGER
+                              |
+                     DECISION ENGINE
+                              |
+                   +----------+----------+
+                   |                     |
+                ENTRAR               NÃO ENTRAR
+                   |
+                   v
+                  MT5
+                   |
+                Exness
+                   |
+                resultado
+                   |
+                   v
+              JARVIS BRAIN
+
+
+34. PRINCÍPIO DE APRENDIZADO
+----------------------------
+
+Ciclo esperado:
+
+ANALISAR
+   ->
+DECIDIR
+   ->
+OPERAR
+   ->
+OBSERVAR
+   ->
+REGISTRAR RESULTADO
+   ->
+APRENDER
+   ->
+AJUSTAR SCORE
+   ->
+NOVA ANÁLISE
+
+Nunca transformar esse ciclo em uma perseguição de prejuízo.
+
+
+35. O QUE O JARVIS NÃO DEVE FAZER
+----------------------------------
+
+- Não fazer martingale automaticamente.
+- Não aumentar lote simplesmente porque ganhou.
+- Não tentar recuperar loss imediatamente.
+- Não repetir a mesma entrada sem nova validação.
+- Não mudar a estratégia por causa de um único trade.
+- Não ignorar o Market Guard.
+- Não ignorar sequência de losses.
+- Não operar contra o contexto sem justificativa estatística.
+- Não assumir que uma estatística de outro mercado vale para BTCUSD.
+- Não tratar material educacional como garantia de resultado.
+
+
+36. ESTATÍSTICAS DO VÍDEO
+-------------------------
+
+A transcrição apresenta várias estatísticas e afirmações relacionadas aos estudos
+do autor e às análises atribuídas a Thomas Bulkowski.
+
+Exemplos mencionados:
+- determinado padrão com 71%
+- deliberação com 77%
+- alguns candles próximos de 51–53%
+- volume alto melhorando a performance de certos padrões
+- marubozu e outros padrões com regras de amplitude e contexto
+
+REGRA PARA O JARVIS:
+Essas estatísticas devem ser tratadas como REFERÊNCIAS do material,
+não como verdades permanentes para o BTCUSD/MT5/Exness.
+
+Antes de virar regra de execução, cada estatística deve ser:
+
+1. implementada;
+2. testada;
+3. backtestada;
+4. comparada;
+5. validada no ativo;
+6. validada no timeframe;
+7. validada no feed usado pelo JARVIS.
+
+
+37. BACKTEST
+------------
+
+O próximo grande módulo deve permitir testar:
+
+- cada padrão isoladamente
+- cada padrão por contexto
+- cada padrão por timeframe
+- cada padrão com/sem volume
+- cada padrão com/sem suporte/resistência
+- cada padrão com/sem tendência
+- cada padrão com/sem Market Guard
+- cada padrão em diferentes horários
+
+Resultados esperados:
+
+- quantidade de trades
+- wins
+- losses
+- win rate
+- profit factor
+- expectancy
+- payoff
+- drawdown
+- média de resultado
+- maior sequência de losses
+- maior sequência de wins
+
+
+38. MEMÓRIA + BACKTEST
+----------------------
+
+A grande evolução desejada:
+
+O backtest gera conhecimento inicial.
+
+O trading demo gera novos dados.
+
+O Brain armazena os resultados.
+
+O JARVIS compara:
+- estatística histórica
+- estatística recente
+- contexto atual
+
+E então gera o score.
+
+
+39. EXEMPLO DE APRENDIZADO
+--------------------------
+
+Setup:
+HAMMER + CONTEXTO 4 + SUPORTE + VOLUME ALTO
+
+Histórico:
+100 trades
+72 wins
+28 losses
+
+WIN RATE:
+72%
+
+Mas observar também:
+- R:R
+- expectancy
+- drawdown
+- estabilidade por período
+
+Se, nas últimas 30 ocorrências:
+o desempenho caiu muito,
+
+o Brain deve reduzir o peso temporariamente.
+
+Não apagar o histórico.
+
+Não declarar automaticamente que a estratégia "morreu".
+
+
+40. LOG DE EXPLICAÇÃO
+---------------------
+
+Toda decisão importante deveria produzir uma explicação.
+
+Exemplo:
+
+14:32:10
+BTCUSD M15
+
+Padrão detectado:
+HAMMER
+
+Contexto:
+#4
+
+Tendência:
+ALTA
+
+Suporte:
+SIM
+
+Volume:
+1,72x
+
+Market Guard:
+92
+
+Brain:
+setup histórico favorável
+
+Score:
+89/100
+
+AÇÃO:
+AGUARDANDO ACIONAMENTO
+
+Depois:
+
+14:33:00
+
+Máxima rompida:
+SIM
+
+Market Guard:
+NORMAL
+
+Brain:
+CAN_TRADE = true
+
+Risco:
+ACEITO
+
+AÇÃO:
+EXECUTAR BUY
+
+
+41. MEMÓRIA HUMANA vs MEMÓRIA ESTRUTURADA
+------------------------------------------
+
+O JARVIS deve ter duas formas conceituais de conhecimento:
+
+MEMÓRIA ESTRUTURADA
+- banco SQLite
+- estatísticas
+- trades
+- padrões
+- erros
+- contexto
+
+MEMÓRIA DE REGRAS
+- política do sistema
+- limites de risco
+- regras de proteção
+- definições dos padrões
+- critérios de invalidação
+
+A decisão final deve usar ambas.
+
+
+42. ARQUITETURA FINAL PROPOSTA
+------------------------------
+
+JARVIS
+|
++-- UI 16:9
+|
++-- Dashboard
+|
++-- TradingView / gráfico ou gráfico próprio
+|
++-- Signal Engine
+|
++-- Candle Engine
+|
++-- Context Engine
+|
++-- Structure Engine
+|
++-- Multi-Timeframe Engine
+|
++-- Volume Engine
+|
++-- Volatility / ATR Engine
+|
++-- Market Guard
+|
++-- Risk Manager
+|
++-- Decision Engine
+|
++-- JARVIS Brain
+|    |
+|    +-- trade memory
+|    +-- error memory
+|    +-- win memory
+|    +-- pattern memory
+|    +-- session state
+|    +-- learning log
+|
++-- Backtest Engine
+|
++-- Paper Trading
+|
++-- MT5 Connector
+|
++-- Exness
+|
++-- Logs
+
+
+43. ARQUIVOS JÁ GERADOS NO PROJETO
+-----------------------------------
+
+Pacote base:
+JARVIS_MT5_Exness_COMPLETO.zip
+
+Versão Market Guard:
+JARVIS_MT5_Exness_MARKET_GUARD.zip
+
+Versão Brain:
+JARVIS_MT5_Exness_BRAIN_COMPLETO.zip
+
+Os pacotes foram criados para uso local em Windows.
+
+
+44. COMO CONTINUAR O PROJETO
+----------------------------
+
+Ordem recomendada:
+
+FASE 1
+- conectar MT5
+- confirmar Exness Demo
+- receber BTCUSD
+- validar candles
+
+FASE 2
+- validar Market Guard
+- observar spread
+- validar bloqueios
+
+FASE 3
+- ativar JARVIS Brain
+- registrar trades paper/demo
+- validar memória
+
+FASE 4
+- desenvolver Context Engine
+- implementar suporte/resistência
+- implementar detecção objetiva de candles
+
+FASE 5
+- implementar 8–12 padrões prioritários
+- multi-timeframe
+- volume
+- ATR
+
+FASE 6
+- Decision Engine
+- Confluence Score
+- explicação da decisão
+
+FASE 7
+- backtest completo
+- validação estatística
+
+FASE 8
+- Paper Trading prolongado
+
+FASE 9
+- Demo Trading
+
+FASE 10
+- Real Trading somente após validação e limites rígidos
+
+
+45. PRINCÍPIOS MESTRES DO JARVIS
+--------------------------------
+
+1. CONTEXTO > CANDLE ISOLADO
+
+2. PROBABILIDADE > CERTEZA
+
+3. EXPECTANCY > WIN RATE ISOLADO
+
+4. CONFIRMAÇÃO > PRESSA
+
+5. RISCO PRIMEIRO
+
+6. UM LOSS É DADO, NÃO É UM COMANDO PARA DOBRAR A MÃO
+
+7. UM WIN É UMA EVIDÊNCIA, NÃO UMA LICENÇA PARA AUMENTAR O RISCO
+
+8. A MEMÓRIA DEVE APRENDER, MAS DE FORMA CONSERVADORA
+
+9. MARKET GUARD PODE BLOQUEAR A EXECUÇÃO
+
+10. O JARVIS DEVE EXPLICAR SUAS DECISÕES
+
+11. NÚMEROS DO VÍDEO SÃO REFERÊNCIAS E DEVEM SER BACKTESTADOS
+
+12. TODA ESTRATÉGIA NOVA DEVE PASSAR POR PAPER/DEMO ANTES DO REAL
+
+
+46. VISÃO DE LONGO PRAZO
+------------------------
+
+O objetivo não é criar um robô que "adivinhe" o próximo candle.
+
+O objetivo é criar um sistema que:
+
+- reconheça contextos;
+- encontre setups;
+- quantifique a qualidade;
+- valide as condições;
+- controle risco;
+- monitore o mercado;
+- registre cada decisão;
+- analise o resultado;
+- aprenda com os erros;
+- preserve os padrões vencedores;
+- adapte os pesos de forma conservadora;
+- bloqueie operações ruins;
+- mantenha histórico suficiente para decisões futuras.
+
+Em outras palavras:
+
+JARVIS não deve ser apenas um executor.
+
+JARVIS deve ser um sistema de decisão com memória.
+
+
+47. OBSERVAÇÃO DE SEGURANÇA
+---------------------------
+
+O projeto trata de trading e envolve risco financeiro.
+
+Qualquer mecanismo de execução real deve:
+- começar em DEMO;
+- ter limites de volume;
+- ter limite de posições;
+- ter proteção de perdas;
+- ter Market Guard;
+- ter logs;
+- ter possibilidade de desligamento;
+- ser testado em histórico e em paper trading.
+
+Nenhuma arquitetura, padrão de candle ou estatística garante lucro.
+
+
+FIM DO DOCUMENTO
+================
+
+Este TXT deve ser mantido como "memória-mestra" do projeto.
+Novas decisões, mudanças de arquitetura, regras de risco, padrões validados,
+resultados de backtests e melhorias do JARVIS devem ser adicionados a este documento
+em futuras versões.

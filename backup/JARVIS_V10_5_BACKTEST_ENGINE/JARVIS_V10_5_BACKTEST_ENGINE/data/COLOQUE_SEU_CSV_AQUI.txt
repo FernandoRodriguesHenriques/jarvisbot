@@ -1,0 +1,5 @@
+Coloque aqui o histórico OHLC exportado do MT5.
+Exemplo: XAUUSDm_M15.csv
+
+Colunas:
+timestamp,open,high,low,close,volume,spread

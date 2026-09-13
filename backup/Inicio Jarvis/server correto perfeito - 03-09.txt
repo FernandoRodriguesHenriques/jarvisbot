@@ -1,0 +1,176 @@
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+import MetaTrader5 as mt5
+from collections import deque
+import math, datetime
+
+app = Flask(__name__)
+CORS(app)
+
+mt5.initialize()
+print("JARVIS V6.5 CONSERVADORA - Igual da sua foto")
+price_history = {}
+
+def ema_calc(data, period):
+    if len(data) < period: return data[-1] if data else 0
+    k = 2/(period+1)
+    e = sum(data[:period])/period
+    for p in data[period:]: e = p*k + e*(1-k)
+    return e
+
+def sma_calc(data, p):
+    return sum(data[-p:])/p if len(data)>=p else sum(data)/len(data) if data else 0
+
+def std_calc(data, p):
+    if len(data)<p: return 0
+    sma=sma_calc(data,p)
+    var=sum((x-sma)**2 for x in data[-p:])/p
+    return math.sqrt(var)
+
+@app.route('/')
+def home():
+    return send_from_directory('.', 'index.html')
+
+@app.route('/analysis')
+def analysis():
+    try:
+        raw = request.args.get('symbol','XAUUSDm')
+        symbol = raw.split('?')[0].split('&')[0].strip()
+        tf_str = request.args.get('tf','1')
+
+        mt5.symbol_select(symbol, True)
+        tick = mt5.symbol_info_tick(symbol)
+        info = mt5.symbol_info(symbol)
+        if not tick:
+            return jsonify({"symbol": symbol, "price": 0, "ema9": 0, "ema21": 0, "rsi": 0, "macd": 0, "bb_up": 0, "bb_low": 0, "signal": "AGUARDAR", "confidence": 0, "reason": "Sem tick - Abra MT5", "guard": 0, "guard_status": "ERRO", "spread": 0, "guard_msg": "Sem dados", "collect": "0/20"})
+
+        # Spread check - igual da foto 260 pts > limite 80
+        spread_pts = 0
+        try:
+            if info and info.point:
+                spread_pts = int((tick.ask - tick.bid) / info.point)
+        except: spread_pts = 150
+
+        # Guard logic igual foto
+        guard_score = 100
+        guard_status = "SEGURO"
+        guard_msg = "Mercado OK"
+        if spread_pts > 200:
+            guard_score = 60
+            guard_status = "ATENÇÃO"
+            guard_msg = f"Spread {spread_pts}pts > limite 80"
+        elif spread_pts > 80:
+            guard_score = 70
+            guard_status = "ATENÇÃO"
+            guard_msg = f"Spread {spread_pts}pts (lim 80)"
+
+        # Coleta de preços - sem copy_rates pra não dar erro
+        key = f"{symbol}_{tf_str}"
+        if key not in price_history:
+            price_history[key] = deque(maxlen=200)
+        price_history[key].append(tick.bid)
+        closes = list(price_history[key])
+
+        if len(closes) < 20:
+            return jsonify({
+                "symbol": symbol,
+                "price": round(tick.bid, 3),
+                "ema9": round(tick.bid, 3),
+                "ema21": round(tick.bid, 3),
+                "rsi": 50,
+                "macd": 0,
+                "bb_up": round(tick.bid, 3),
+                "bb_low": round(tick.bid, 3),
+                "signal": "AGUARDAR",
+                "confidence": 0,
+                "reason": f"Coletando... {len(closes)}/20",
+                "guard": guard_score,
+                "guard_status": guard_status,
+                "spread": spread_pts,
+                "guard_msg": guard_msg,
+                "collect": f"{len(closes)}/20"
+            })
+
+        # Calculo V6.5 Conservadora
+        ema9 = ema_calc(closes, 9)
+        ema21 = ema_calc(closes, 21)
+        ema12 = ema_calc(closes, 12)
+        ema26 = ema_calc(closes, 26)
+        macd = ema12 - ema26
+        sma20 = sma_calc(closes, 20)
+        std20 = std_calc(closes, 20)
+        bb_up = sma20 + 2*std20
+        bb_low = sma20 - 2*std20
+
+        gains=0; losses=0
+        for i in range(1, 15):
+            diff = closes[-i] - closes[-i-1]
+            if diff>0: gains+=diff
+            else: losses+=-diff
+        rsi = 100 - (100/(1+(gains/(losses if losses!=0 else 1)))) if losses!=0 else 55
+        rsi = int(rsi)
+
+        tendencia = "ALTA" if ema9>ema21 else "BAIXA"
+        score=0
+        if ema9>ema21: score+=1
+        else: score+=1
+        if macd>0: score+=1
+
+        # Conservadora: só entra com 80%+ e guard >=60
+        signal="AGUARDAR"; conf=0
+        if len(closes)>=20 and guard_score>=60:
+            if tendencia=="ALTA" and rsi>50 and rsi<68 and macd>0:
+                signal="CALL"; conf=80+score*2
+            elif tendencia=="BAIXA" and rsi<50 and rsi>32 and macd<0:
+                signal="PUT"; conf=82+score*2
+            else:
+                conf=0
+                signal="AGUARDAR"
+
+        conf = min(90, conf) if signal!="AGUARDAR" else 0
+        reason = f"{tendencia} RSI {rsi}" if signal!="AGUARDAR" else f"Coletando... {len(closes)}/20" if len(closes)<20 else "Sem confluência conservadora"
+
+        return jsonify({
+            "symbol": symbol,
+            "price": round(tick.bid, 3),
+            "ema9": round(ema9, 3),
+            "ema21": round(ema21, 3),
+            "rsi": rsi,
+            "macd": round(macd, 5),
+            "bb_up": round(bb_up, 3),
+            "bb_low": round(bb_low, 3),
+            "signal": signal,
+            "confidence": conf,
+            "reason": reason,
+            "guard": guard_score,
+            "guard_status": guard_status,
+            "spread": spread_pts,
+            "guard_msg": guard_msg,
+            "collect": f"{len(closes)}/20"
+        })
+    except Exception as e:
+        print(f"Erro analysis: {e}")
+        return jsonify({"symbol": "XAUUSDm", "price": 0, "signal": "AGUARDAR", "confidence": 0, "reason": str(e)[:60], "guard": 0, "guard_status": "ERRO", "spread": 0, "guard_msg": "Erro", "collect": "0/20"})
+
+@app.route('/trade', methods=['POST'])
+def trade():
+    try:
+        d=request.get_json()
+        symbol=d.get('symbol','XAUUSDm').split('?')[0].split('&')[0]
+        action=d.get('action','buy')
+        lot=float(d.get('lot',0.10))
+        mt5.symbol_select(symbol, True)
+        tick=mt5.symbol_info_tick(symbol)
+        if not tick: return jsonify({"ok": False, "error": "Sem tick"}), 400
+        price=tick.ask if action=='buy' else tick.bid
+        otype=mt5.ORDER_TYPE_BUY if action=='buy' else mt5.ORDER_TYPE_SELL
+        req={"action":mt5.TRADE_ACTION_DEAL,"symbol":symbol,"volume":lot,"type":otype,"price":price,"deviation":50,"magic":6502026,"comment":"JARVIS V6.5","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC}
+        res=mt5.order_send(req)
+        if res and res.retcode==mt5.TRADE_RETCODE_DONE:
+            return jsonify({"ok": True, "ticket": res.order})
+        return jsonify({"ok": False, "error": res.comment if res else "erro"}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+if __name__=='__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)

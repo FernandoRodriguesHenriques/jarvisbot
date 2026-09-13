@@ -1,0 +1,550 @@
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+import MetaTrader5 as mt5
+import datetime, time, threading, math, os, statistics, sqlite3, requests, json, urllib.parse
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+app = Flask(__name__)
+CORS(app)
+mt5.initialize()
+
+BOT_ATIVO = False
+MODO_ATUAL = "conservadora"
+SL_TP = {"conservadora": {"sl": -15.0, "tp": 25.0}, "agressiva": {"sl": -25.0, "tp": 45.0}}
+
+# ===== MONSTRO 64 ATIVOS COM FLAG FDS =====
+ATIVOS_FOREX = [
+    "XAUUSDm","EURUSDm","USDJPYm","GBPUSDm",
+    "AUDCADm","AUDCHFm","AUDCZKm","AUDDKKm","AUDHUFm","AUDJPYm","AUDMXNm","AUDNOKm","AUDPLNm","AUDSEKm","AUDSGDm","AUDTRYm","AUDUSDm","AUDZARm",
+    "CADCHFm","CADCZKm","CADJPYm","CADMXNm","CADNOKm","CADPLNm","CADTRYm",
+    "CHFDKKm","CHFHUFm","CHFJPYm","CHFMXNm","CHFNOKm","CHFPLNm",
+    "USDCHFm","USDCADm","NZDUSDm","EURJPYm","GBPJPYm","EURAUDm","GBPCHFm"
+]
+ATIVOS_INDICES = [
+    "US500m","US30m","AUS200m","DE30m","FR40m","HK50m","JP225m","STOXX50m","UK100m","USTECm","IN50m","USOILm"
+]
+ATIVOS_CRYPTO = [
+    "BTCUSDm","ETHUSDm","SOLUSDm","BNBUSDm","XRPUSDm","DOGEUSDm",
+    "LTCUSDm","LINKUSDm","ADAUSDm","MATICUSDm","BCHUSDm","DOTUSDm",
+    "UNIUSDm","AVAXUSDm","ATOMUSDm","ETCUSDm","XLMUSDm","TRXUSDm","NEARUSDm","APTUSDm"
+]
+
+def get_ativos_atuais():
+    dia = datetime.datetime.now().weekday()
+    if dia in [5,6]:
+        return ATIVOS_CRYPTO, "CRYPTO_WEEKEND"
+    else:
+        return ATIVOS_FOREX + ATIVOS_INDICES + ATIVOS_CRYPTO, "FULL"
+
+ATIVOS = ATIVOS_FOREX + ATIVOS_INDICES + ATIVOS_CRYPTO
+MAX_POR_ATIVO = 1
+MAX_TOTAL = 3
+COOLDOWN = 300
+STOP_DIARIO = -50.0
+MAX_TRADES_DIA = 15
+MAGIC = 6502026
+ATR_PERIOD = 21
+MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
+MIN_SCORE = 68
+DEFAULT_TF = "M15"
+TIMEFRAMES = {"M1": mt5.TIMEFRAME_M1, "M5": mt5.TIMEFRAME_M5, "M15": mt5.TIMEFRAME_M15, "M30": mt5.TIMEFRAME_M30, "H1": mt5.TIMEFRAME_H1, "H4": mt5.TIMEFRAME_H4, "D1": mt5.TIMEFRAME_D1}
+HTF_MAP = {"M1": ["M15","H1"], "M5": ["M15","H1"], "M15": ["H1","H4"], "M30": ["H4"], "H1": ["H4"], "H4": ["D1"]}
+
+# ===== PASTAS NOVAS ORGANIZADAS =====
+DB = "data/jarvis_memory.db"
+WHATSAPP_JSON = "config/whatsapp.json"
+HISTORICO_JSON = "data/historico.json"
+RELATORIO_DIR = "relatorios"
+BANCA_INICIAL_FILE = "config/banca_inicial.txt"
+RELATORIO_DIARIO_FILE = "data/relatorio_diario.txt"
+
+SPREAD_LIMITES = {"conservadora": 80, "agressiva": 300}
+
+def load_whatsapp_config():
+    try:
+        with open(WHATSAPP_JSON, "r") as f:
+            data = json.load(f)
+            return data.get("phone","5511954677471"), data.get("apikey","7456841")
+    except:
+        return "5511954677471", "7456841"
+
+def get_conta():
+    try: return mt5.account_info()
+    except: return None
+
+def get_banca_inicial():
+    try:
+        os.makedirs("config", exist_ok=True)
+        with open(BANCA_INICIAL_FILE, "r") as f:
+            return float(f.read().strip())
+    except:
+        conta = get_conta()
+        banca = conta.balance if conta else 10003.57
+        try:
+            os.makedirs("config", exist_ok=True)
+            with open(BANCA_INICIAL_FILE, "w") as ff: ff.write(str(banca))
+        except: pass
+        return banca
+
+def calcular_relatorio():
+    banca_inicial = get_banca_inicial()
+    conta = get_conta()
+    banca_atual = conta.balance if conta else banca_inicial
+    equity = conta.equity if conta else banca_atual
+    profit_aberto = conta.profit if conta else 0
+    hoje = datetime.date.today().isoformat()
+    try:
+        con = sqlite3.connect(DB); cur = con.cursor()
+        cur.execute("SELECT COUNT(*) FROM trade_memory WHERE date(timestamp)=? AND result='WIN'", (hoje,))
+        wins_hoje = cur.fetchone()[0] or 0
+        cur.execute("SELECT COUNT(*) FROM trade_memory WHERE date(timestamp)=? AND result='LOSS'", (hoje,))
+        loss_hoje = cur.fetchone()[0] or 0
+        cur.execute("SELECT COUNT(*), SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END), SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END), SUM(profit) FROM trade_memory")
+        total, wins_total, loss_total, profit_total = cur.fetchone()
+        con.close()
+    except: wins_hoje=0; loss_hoje=0; total=0; wins_total=0; loss_total=0; profit_total=0
+    total = total or 0; wins_total = wins_total or 0; loss_total = loss_total or 0; profit_total = profit_total or 0
+    lucro_ate_agora = banca_atual - banca_inicial
+    win_rate = (wins_total/total*100) if total>0 else 0
+    taxa_hoje = (wins_hoje/(wins_hoje+loss_hoje)*100) if (wins_hoje+loss_hoje)>0 else 0
+    agora_str = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+    texto_simples = f"========== RELATORIO JARVIS - {agora_str} ==========\nSaldo: ${banca_atual:.2f}\nLucro Hoje: ${lucro_ate_agora:.2f}\nTrades: {wins_hoje+loss_hoje} (W:{wins_hoje}/L:{loss_hoje}) Taxa: {taxa_hoje:.1f}%\n============================================="
+    texto_v10 = f"JARVIS V10 - RELATORIO 12H\n{agora_str} - {MODO_ATUAL.upper()}\nBANCA:\nInicial: $ {banca_inicial:.2f}\nAtual: $ {banca_atual:.2f}\nEquity: $ {equity:.2f}\nAberto: $ {profit_aberto:.2f}\nLucro Hoje: $ {lucro_ate_agora:.2f}\nHOJE:\nWins: {wins_hoje} | Loss: {loss_hoje} | Total: {wins_hoje+loss_hoje}\nTaxa Hoje: {taxa_hoje:.1f}%\nTOTAL GERAL:\nWins: {wins_total} | Loss: {loss_total} | Total: {total}\nWin Rate: {win_rate:.1f}%\nAcumulado: $ {profit_total:.2f}\n"
+    return {"banca_inicial": banca_inicial, "banca_atual": banca_atual, "equity": equity, "profit_aberto": profit_aberto, "lucro_ate_agora": lucro_ate_agora, "wins_hoje": wins_hoje, "loss_hoje": loss_hoje, "taxa_hoje": taxa_hoje, "wins_total": wins_total, "loss_total": loss_total, "total": total, "win_rate": win_rate, "profit_total": profit_total, "texto_simples": texto_simples, "texto_v10": texto_v10, "texto": texto_v10}
+
+def enviar_whatsapp(texto):
+    phone, apikey = load_whatsapp_config()
+    try:
+        texto_enc = urllib.parse.quote(texto)
+        url = f"https://api.callmebot.com/whatsapp.php?phone={phone}&text={texto_enc}&apikey={apikey}"
+        requests.get(url, timeout=15)
+        return True
+    except: return False
+
+def salvar_historico_e_relatorios(dados):
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open(RELATORIO_DIARIO_FILE, "a", encoding="utf-8") as f: f.write("\n" + dados["texto_simples"] + "\n")
+        if not os.path.exists(RELATORIO_DIR): os.makedirs(RELATORIO_DIR)
+        hoje_file = datetime.date.today().strftime("%d-%m-%Y")
+        with open(f"{RELATORIO_DIR}/relatorio_{hoje_file}.txt", "w", encoding="utf-8") as f: f.write(dados["texto_v10"])
+    except: pass
+
+def loop_relatorio_12h():
+    ja_enviou_12 = ""
+    ja_enviou_2359 = ""
+    while True:
+        try:
+            agora = datetime.datetime.now()
+            hoje_str = agora.strftime("%Y-%m-%d")
+            # 12:00
+            if agora.hour == 12 and agora.minute < 5 and ja_enviou_12!= hoje_str:
+                print(f"[RELATORIO] Gerando 12:00 {hoje_str}")
+                dados=calcular_relatorio()
+                enviar_whatsapp(dados["texto"])
+                salvar_historico_e_relatorios(dados)
+                ja_enviou_12=hoje_str
+            # 23:59
+            if agora.hour == 23 and agora.minute == 59 and ja_enviou_2359!= hoje_str:
+                print(f"[RELATORIO] Gerando 23:59 {hoje_str}")
+                dados=calcular_relatorio()
+                enviar_whatsapp(dados["texto"])
+                salvar_historico_e_relatorios(dados)
+                ja_enviou_2359=hoje_str
+            time.sleep(30)
+        except: time.sleep(60)
+
+threading.Thread(target=loop_relatorio_12h, daemon=True).start()
+
+state = {"trades_today":0, "day":datetime.date.today().isoformat(), "last_by_sym":{}, "last_scan":{}, "cooldown_until":0}
+
+def init_db():
+    os.makedirs("data", exist_ok=True)
+    os.makedirs("config", exist_ok=True)
+    con=sqlite3.connect(DB); cur=con.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS trade_memory (id INTEGER PRIMARY KEY AUTOINCREMENT, ticket INTEGER, symbol TEXT, pattern TEXT, direction TEXT, entry REAL, exit REAL, volume REAL, profit REAL, result TEXT, htf_bias TEXT, macd_signal TEXT, ignition INTEGER, timestamp TEXT)")
+    con.commit();con.close()
+init_db()
+
+def reset_day():
+    hoje=datetime.date.today().isoformat()
+    if state["day"]!=hoje:
+        state["day"]=hoje; state["trades_today"]=0; state["last_by_sym"].clear(); state["cooldown_until"]=0
+
+def pode_operar(symbol):
+    reset_day()
+    if not BOT_ATIVO: return False, "Bot DESLIGADO"
+    if time.time() < state["cooldown_until"]: return False, f"COOLDOWN {int(state['cooldown_until']-time.time())}s"
+    pos=mt5.positions_get()
+    if pos and len(pos)>=MAX_TOTAL: return False, f"Total {len(pos)}/{MAX_TOTAL}"
+    if symbol:
+        same=[p for p in (pos or []) if p.symbol==symbol]
+        if len(same)>=MAX_POR_ATIVO: return False, f"{symbol} ja tem"
+        ultimo=state["last_by_sym"].get(symbol,0)
+        rest=COOLDOWN-(time.time()-ultimo)
+        if ultimo and rest>0: return False, f"Cooldown {int(rest)}s"
+    conta=get_conta()
+    if conta and conta.profit<=STOP_DIARIO: return False, f"Stop diario {conta.profit}"
+    if conta and conta.margin_level and conta.margin_level<150: return False, f"Margem {conta.margin_level:.0f}%"
+    if state["trades_today"]>=MAX_TRADES_DIA: return False, "Max trades dia"
+    return True, "LIBERADO"
+
+def candles(symbol, tf_name, count=200):
+    tf=TIMEFRAMES.get(tf_name.upper())
+    if not tf: return []
+    rates=mt5.copy_rates_from_pos(symbol, tf, 0, count)
+    if rates is None: return []
+    return [{"time":int(r[0]), "open":float(r[1]), "high":float(r[2]), "low":float(r[3]), "close":float(r[4]), "tick_volume":int(r[5])} for r in rates]
+
+def ema_calc(vals, period):
+    if not vals: return 0
+    if len(vals)<period: period=len(vals)
+    k=2/(period+1); e=sum(vals[:period])/period
+    for p in vals[period:]: e=p*k+e*(1-k)
+    return e
+
+def atr_calc(rows, period=ATR_PERIOD):
+    if len(rows)<period+1: return 0.0
+    trs=[]
+    for i in range(1,len(rows)):
+        trs.append(max(rows[i]["high"]-rows[i]["low"], abs(rows[i]["high"]-rows[i-1]["close"]), abs(rows[i]["low"]-rows[i-1]["close"])))
+    return sum(trs[-period:])/period if trs else 0
+
+def volume_ratio(rows):
+    if len(rows)<22: return 0
+    avg=sum(x["tick_volume"] for x in rows[-22:-1])/21
+    return rows[-1]["tick_volume"]/avg if avg else 0
+
+def macd_series(closes):
+    if len(closes)<MACD_SLOW+MACD_SIGNAL+2: return []
+    macds=[]
+    for i in range(MACD_SLOW-1, len(closes)):
+        ef=ema_calc(closes[:i+1], MACD_FAST); es=ema_calc(closes[:i+1], MACD_SLOW)
+        macds.append(ef-es)
+    res=[]
+    for i in range(MACD_SIGNAL-1, len(macds)):
+        ml=macds[i]; sl=ema_calc(macds[:i+1], MACD_SIGNAL)
+        res.append((ml, sl, ml-sl))
+    return res
+
+def macd_analysis(rows):
+    if len(rows)<MACD_SLOW+MACD_SIGNAL+5: return "NEUTRAL",0,0
+    series=macd_series([r["close"] for r in rows])
+    if len(series)<2: return "NEUTRAL",0,0
+    _,_,h_now=series[-1]; _,_,h_prev=series[-2]
+    if h_prev<=0<h_now: return "CROSS_UP",h_now,h_prev
+    if h_prev>=0>h_now: return "CROSS_DOWN",h_now,h_prev
+    if h_now>0 and h_now>=h_prev: return "BULL",h_now,h_prev
+    if h_now<0 and h_now<=h_prev: return "BEAR",h_now,h_prev
+    if h_now>0 and h_now<h_prev: return "DIVERGE",h_now,h_prev
+    if h_now<0 and h_now>h_prev: return "CONVERGE",h_now,h_prev
+    return "NEUTRAL",h_now,h_prev
+
+def context_engine(rows):
+    if len(rows)<60: return {"context_id":0,"allowed":False,"trend":"INDEFINIDA","ema21":0,"ema50":0,"ema_separation_atr":0,"desc":"Coletando"}
+    closes=[x["close"] for x in rows]
+    e21=ema_calc(closes,21); e50=ema_calc(closes,50); e9=ema_calc(closes,9)
+    atrv=max(atr_calc(rows),1e-9)
+    bull=e21>e50; bear=e21<e50
+    old=statistics.mean(closes[-14:-7]); recent=statistics.mean(closes[-7:])
+    correction=(bull and recent<old) or (bear and recent>old)
+    if bull and correction: cid=4
+    elif bear and correction: cid=8
+    elif bull: cid=2
+    elif bear: cid=6
+    else: cid=0
+    return {"context_id":cid,"allowed":cid in (4,8),"trend":"ALTA" if bull else "BAIXA" if bear else "INDEFINIDA","correction":correction,"ema9":e9,"ema21":e21,"ema50":e50,"ema_separation_atr":abs(e21-e50)/atrv,"desc":f"CTX {cid} {'ALTA' if bull else 'BAIXA'} {'+CORRECAO' if correction else ''}"}
+
+def htf_bias(symbol, base_tf):
+    htf_list=HTF_MAP.get(base_tf.upper(), ["H1","H4"])
+    results=[]
+    for tf in htf_list:
+        try:
+            rows=candles(symbol, tf, 150)
+            if len(rows)<60: results.append("NEUTRAL"); continue
+            ctx=context_engine(rows)
+            results.append(ctx["trend"])
+        except: results.append("NEUTRAL")
+    if all(r=="ALTA" for r in results): return "BULL"
+    if all(r=="BAIXA" for r in results): return "BEAR"
+    return "NEUTRAL"
+
+def is_ignition(rows, direction):
+    if len(rows)<22: return False
+    atrv=atr_calc(rows); vr=volume_ratio(rows)
+    r=rows[-1]; body=abs(r["close"]-r["open"]); rng=max(r["high"]-r["low"],1e-9)
+    corpo=body/rng>=0.60; vol=vr>=1.5; tam=body>=atrv*0.8
+    dir_ok=(r["close"]>r["open"]) if direction=="BUY" else (r["close"]<r["open"])
+    return corpo and vol and tam and dir_ok
+
+def classify_patterns(rows):
+    if len(rows)<5: return []
+    out=[]
+    r=rows[-1]; o=r["open"]; c=r["close"]; h=r["high"]; l=r["low"]; rng=max(h-l,1e-9); body=abs(c-o)
+    if body/rng<0.25 and (min(o,c)-l)/rng>=0.55: out.append("HAMMER")
+    if body/rng<0.10: out.append("DOJI")
+    if body/rng>=0.75: out.append("MARUBOZU")
+    if len(rows)>=2:
+        prev=rows[-2]
+        if prev["close"]<prev["open"] and c>o and r["open"]<=prev["close"] and c>=prev["open"]: out.append("ENGULFING_BULL")
+        if prev["close"]>prev["open"] and c<o and r["open"]>=prev["close"] and c<=prev["open"]: out.append("ENGULFING_BEAR")
+    if is_ignition(rows,"BUY"): out.append("IGNITION_BULL")
+    if is_ignition(rows,"SELL"): out.append("IGNITION_BEAR")
+    return list(dict.fromkeys(out))
+
+def market_guard(symbol):
+    info=mt5.symbol_info(symbol); tick=mt5.symbol_info_tick(symbol)
+    if not info or not tick: return {"score":0,"decision":"BLOCK","status":"SEM COTACAO","spread":999,"guard":0}
+    spread=int((tick.ask-tick.bid)/info.point) if info.point else 999
+    limite=SPREAD_LIMITES[MODO_ATUAL]
+    guard=100 if spread<=limite else 60 if MODO_ATUAL=="conservadora" else 75
+    status="SEGURO" if spread<=limite else "ATENCAO" if MODO_ATUAL=="conservadora" else "LIBERADO"
+    dec="ALLOW" if guard>=60 else "BLOCK"
+    return {"score":guard,"decision":dec,"status":status,"spread":spread,"guard":guard,"bid":tick.bid,"ask":tick.ask}
+
+def analyze_v10(symbol, tf=DEFAULT_TF):
+    mt5.symbol_select(symbol, True)
+    rows=candles(symbol, tf, 300)
+    if len(rows)<60:
+        return {"symbol":symbol,"timeframe":tf,"price":rows[-1]["close"] if rows else 0,"signal":"AGUARDAR","score":0,"reason":"Coletando","patterns":[],"guard":60,"guard_status":"COLETANDO","spread":0,"ema9":0,"ema21":0,"ema_signal":"COLETANDO","htf_bias":"NEUTRAL","macd_signal":"NEUTRAL","ignition":False,"volume_ratio":0}
+    ctx=context_engine(rows)
+    pats=classify_patterns(rows)
+    guard=market_guard(symbol)
+    vr=volume_ratio(rows)
+    atrv=atr_calc(rows)
+    macd_sig,h_now,h_prev=macd_analysis(rows)
+    bias=htf_bias(symbol, tf)
+    ign_bull=is_ignition(rows,"BUY")
+    ign_bear=is_ignition(rows,"SELL")
+    score=0; reasons=[]; direction=""
+    if not ctx["allowed"]:
+        reasons.append("Sem correcao CTX 4/8")
+    else:
+        score+=20; reasons.append(ctx["desc"])
+        direction="BUY" if ctx["trend"]=="ALTA" else "SELL" if ctx["trend"]=="BAIXA" else ""
+        htf_ok=(direction=="BUY" and bias=="BULL") or (direction=="SELL" and bias=="BEAR")
+        if not htf_ok: score-=25; reasons.append(f"HTF {bias} diverge")
+        else: score+=18; reasons.append(f"HTF {bias} ok")
+        if ctx["ema_separation_atr"]>=0.10: score+=10
+        if direction=="BUY" and macd_sig in ("CROSS_UP","BULL"): score+=18; reasons.append(f"MACD {macd_sig}")
+        elif direction=="SELL" and macd_sig in ("CROSS_DOWN","BEAR"): score+=18; reasons.append(f"MACD {macd_sig}")
+        elif macd_sig in ("CROSS_DOWN","BEAR") and direction=="BUY": score-=15
+        elif macd_sig in ("CROSS_UP","BULL") and direction=="SELL": score-=15
+        if pats: score+=12; reasons.append(",".join(pats))
+        if direction=="BUY" and ign_bull: score+=14; reasons.append("Ignicao BULL")
+        if direction=="SELL" and ign_bear: score+=14; reasons.append("Ignicao BEAR")
+        if vr>=1.10: score+=8
+        if guard["score"]>=90: score+=8
+        if rows[-1]["high"]-rows[-1]["low"]>atrv*2.5: score-=12
+    score=max(0,min(100,int(score)))
+    htf_ok=(direction=="BUY" and bias=="BULL") or (direction=="SELL" and bias=="BEAR")
+    signal="AGUARDAR"
+    if score>=MIN_SCORE and pats and guard["decision"]!="BLOCK" and htf_ok and ctx["allowed"]:
+        signal=direction
+    ema_sig="CALL" if ctx.get("ema21",0)>ctx.get("ema50",0) else "PUT" if ctx.get("ema21",0)<ctx.get("ema50",0) else "--"
+    return {"symbol":symbol,"timeframe":tf,"price":round(rows[-1]["close"],3),"signal":signal,"direction":direction,"score":score,"patterns":pats,"context":ctx,"guard":guard["guard"],"guard_status":guard["status"],"spread":guard["spread"],"trades_hoje":state["trades_today"],"modo":MODO_ATUAL,"bot":BOT_ATIVO,"ema9":round(ctx.get("ema9",0),3),"ema21":round(ctx.get("ema21",0),3),"ema50":round(ctx.get("ema50",0),3),"ema_signal":ema_sig,"htf_bias":bias,"macd_signal":macd_sig,"macd_histogram":round(h_now,8),"ignition_bar":ign_bull if direction=="BUY" else ign_bear,"volume_ratio":round(vr,2),"atr":round(atrv,5),"reason":" | ".join(reasons),"sl":SL_TP[MODO_ATUAL]["sl"],"tp":SL_TP[MODO_ATUAL]["tp"]}
+
+def fechar_auto(ticket, motivo):
+    try:
+        all_pos=mt5.positions_get()
+        if not all_pos: return False
+        p=None
+        for pp in all_pos:
+            if pp.ticket==ticket: p=pp; break
+        if not p: return False
+        tick=mt5.symbol_info_tick(p.symbol)
+        if not tick: return False
+        price=tick.bid if p.type==0 else tick.ask
+        otype=mt5.ORDER_TYPE_SELL if p.type==0 else mt5.ORDER_TYPE_BUY
+        req={"action":mt5.TRADE_ACTION_DEAL,"symbol":p.symbol,"volume":p.volume,"type":otype,"position":ticket,"price":price,"deviation":100,"magic":MAGIC,"comment":f"JARVIS V10 {motivo}","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC}
+        res=mt5.order_send(req)
+        if not res or res.retcode!=mt5.TRADE_RETCODE_DONE:
+            req["type_filling"]=mt5.ORDER_FILLING_RETURN
+            res=mt5.order_send(req)
+        if res and res.retcode==mt5.TRADE_RETCODE_DONE:
+            try:
+                con=sqlite3.connect(DB); cur=con.cursor()
+                cur.execute("INSERT INTO trade_memory (ticket,symbol,pattern,direction,entry,exit,volume,profit,result,htf_bias,macd_signal,ignition,timestamp) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(ticket,p.symbol,motivo,"buy" if p.type==0 else "sell",p.price_open,price,p.volume,p.profit,"WIN" if p.profit>0 else "LOSS","","",0,datetime.datetime.now().isoformat()))
+                con.commit();con.close()
+            except: pass
+            return True
+        return False
+    except: return False
+
+def executar_ordem(symbol, action, lot, analysis):
+    liberado,msg=pode_operar(symbol)
+    if not liberado: return None, msg
+    mt5.symbol_select(symbol, True)
+    tick=mt5.symbol_info_tick(symbol)
+    if not tick: return None, "Sem tick"
+    price=tick.ask if action=='buy' else tick.bid
+    otype=mt5.ORDER_TYPE_BUY if action=='buy' else mt5.ORDER_TYPE_SELL
+    req={"action":mt5.TRADE_ACTION_DEAL,"symbol":symbol,"volume":lot,"type":otype,"price":price,"deviation":100,"magic":MAGIC,"comment":f"JARVIS V10 {analysis.get('htf_bias')}/{analysis.get('macd_signal')}","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC}
+    res=mt5.order_send(req)
+    if not res or res.retcode!=mt5.TRADE_RETCODE_DONE:
+        req["type_filling"]=mt5.ORDER_FILLING_RETURN
+        res=mt5.order_send(req)
+    if res and res.retcode==mt5.TRADE_RETCODE_DONE:
+        state["trades_today"]+=1; state["last_by_sym"][symbol]=time.time()
+        return res, "OK"
+    err=res.comment if res else "erro"
+    return None, err
+
+def loop_v10():
+    while True:
+        try:
+            reset_day()
+            pos=mt5.positions_get()
+            if pos:
+                sl_val=SL_TP[MODO_ATUAL]["sl"]; tp_val=SL_TP[MODO_ATUAL]["tp"]
+                for p in pos:
+                    if p.profit<=sl_val: fechar_auto(p.ticket, f"SL {sl_val}")
+                    elif p.profit>=tp_val: fechar_auto(p.ticket, f"TP {tp_val}")
+            if not BOT_ATIVO:
+                time.sleep(2); continue
+            if pos and len(pos)>=MAX_TOTAL:
+                time.sleep(3); continue
+            ranking=[]
+            ativos_atuais, flag_atual = get_ativos_atuais()
+            for sym in ativos_atuais:
+                try:
+                    a=analyze_v10(sym, DEFAULT_TF)
+                    state["last_scan"][sym]=a
+                    ranking.append(a)
+                except: pass
+            ranking.sort(key=lambda x: x.get("score",0), reverse=True)
+            cands=[x for x in ranking if x["signal"] in ("BUY","SELL") and x["score"]>=MIN_SCORE]
+            if cands:
+                best=max(cands, key=lambda x: x["score"])
+                sym=best["symbol"]
+                ok,msg=pode_operar(sym)
+                if ok and best["guard"]>=60:
+                    action='buy' if best["signal"]=="BUY" else 'sell'
+                    lot=0.10 if MODO_ATUAL=="conservadora" else 0.20
+                    executar_ordem(sym, action, lot, best)
+            time.sleep(4)
+        except: time.sleep(5)
+
+threading.Thread(target=loop_v10, daemon=True).start()
+
+@app.route('/')
+def home(): return send_from_directory('.', 'index.html')
+@app.route('/assets')
+def assets():
+    ativos, flag = get_ativos_atuais()
+    return jsonify(ativos)
+@app.route('/flag')
+def flag_status():
+    ativos, flag = get_ativos_atuais()
+    return jsonify({"flag": flag, "total": len(ativos), "forex": len(ATIVOS_FOREX), "indices": len(ATIVOS_INDICES), "crypto": len(ATIVOS_CRYPTO), "is_weekend": flag == "CRYPTO_WEEKEND"})
+@app.route('/account')
+def account():
+    c=get_conta()
+    if not c: return jsonify({"balance":0,"equity":0,"profit":0,"margin_level":0,"free_margin":0})
+    return jsonify({"balance":round(c.balance,2),"equity":round(c.equity,2),"profit":round(c.profit,2),"margin_level":round(c.margin_level,2) if c.margin_level else 0,"free_margin":round(c.margin_free,2) if c.margin_free else 0})
+@app.route('/bot/toggle')
+def bot_toggle():
+    global BOT_ATIVO
+    BOT_ATIVO=not BOT_ATIVO
+    return jsonify({"ativo":BOT_ATIVO,"status":"ON" if BOT_ATIVO else "OFF"})
+@app.route('/bot/status')
+def bot_status():
+    reset_day()
+    return jsonify({"ativo":BOT_ATIVO,"status":"ON" if BOT_ATIVO else "OFF","modo":MODO_ATUAL,"trades_today":state["trades_today"],"min_score":MIN_SCORE,"sl":SL_TP[MODO_ATUAL]["sl"],"tp":SL_TP[MODO_ATUAL]["tp"]})
+@app.route('/set_modo')
+def set_modo():
+    global MODO_ATUAL
+    MODO_ATUAL=request.args.get('modo','conservadora')
+    return jsonify({"modo":MODO_ATUAL,"sl":SL_TP[MODO_ATUAL]["sl"],"tp":SL_TP[MODO_ATUAL]["tp"]})
+@app.route('/config')
+def get_config():
+    return jsonify({"modo":MODO_ATUAL,"sl":SL_TP[MODO_ATUAL]["sl"],"tp":SL_TP[MODO_ATUAL]["tp"],"min_score":MIN_SCORE,"timeframe":DEFAULT_TF,"htf_map":HTF_MAP,"sl_tp_todos":SL_TP})
+@app.route('/brain/reset', methods=['POST'])
+def brain_reset():
+    try:
+        con=sqlite3.connect(DB); cur=con.cursor()
+        cur.execute("DELETE FROM trade_memory")
+        con.commit();con.close()
+        state["trades_today"]=0; state["last_by_sym"].clear()
+        try: os.remove(BANCA_INICIAL_FILE)
+        except: pass
+        return jsonify({"ok":True})
+    except Exception as e: return jsonify({"ok":False,"error":str(e)}),500
+@app.route('/analysis')
+def analysis():
+    symbol=request.args.get('symbol','XAUUSDm').split('?')[0].strip()
+    tf=request.args.get('timeframe',DEFAULT_TF)
+    try: a=analyze_v10(symbol, tf)
+    except Exception as e: a={"symbol":symbol,"price":0,"signal":"ERRO","confidence":0,"reason":str(e),"guard":0,"guard_status":"ERRO","spread":0,"patterns":[],"ema9":0,"ema21":0,"ema_signal":"--","htf_bias":"ERRO","macd_signal":"ERRO"}
+    return jsonify({"symbol":a["symbol"],"price":a["price"],"signal":a["signal"],"confidence":a["score"],"reason":a["reason"],"guard":a["guard"],"guard_status":a["guard_status"],"spread":a["spread"],"patterns":a["patterns"],"trades_hoje":state["trades_today"],"modo":MODO_ATUAL,"bot":BOT_ATIVO,"ema9":a["ema9"],"ema21":a["ema21"],"ema_signal":a["ema_signal"],"htf_bias":a["htf_bias"],"macd_signal":a["macd_signal"],"macd_histogram":a["macd_histogram"],"ignition_bar":a["ignition_bar"],"volume_ratio":a["volume_ratio"],"atr":a["atr"],"sl":a["sl"],"tp":a["tp"],"score":a["score"]})
+@app.route('/analysis_all')
+def analysis_all():
+    res=[]
+    ativos, flag = get_ativos_atuais()
+    for sym in ativos:
+        try:
+            a=state["last_scan"].get(sym) or analyze_v10(sym, DEFAULT_TF)
+            res.append({"symbol":sym,"price":a.get("price",0),"spread":a.get("spread",0),"guard":a.get("guard",0),"guard_status":a.get("guard_status","--"),"liberado":pode_operar(sym)[0],"msg":pode_operar(sym)[1],"ema_signal":a.get("ema_signal","--"),"score":a.get("score",0),"signal":a.get("signal","AGUARDAR"),"htf_bias":a.get("htf_bias","--"),"macd_signal":a.get("macd_signal","--"),"flag":flag})
+        except Exception as e:
+            res.append({"symbol":sym,"price":0,"spread":0,"guard":0,"guard_status":"ERRO","liberado":False,"msg":str(e),"ema_signal":"--"})
+    return jsonify(res)
+@app.route('/positions')
+def positions():
+    pos=mt5.positions_get(); lista=[]
+    if pos:
+        for p in pos: lista.append({"ticket":p.ticket,"symbol":p.symbol,"type":"buy" if p.type==0 else "sell","volume":p.volume,"profit":round(p.profit,2),"time":datetime.datetime.fromtimestamp(p.time).strftime("%H:%M:%S")})
+    return jsonify(lista)
+@app.route('/close', methods=['POST'])
+def close():
+    try:
+        d=request.get_json(); ticket=int(d.get('ticket'))
+        ok=fechar_auto(ticket, "MANUAL")
+        if ok: return jsonify({"ok":True})
+        return jsonify({"ok":False,"error":"Falha"}),400
+    except Exception as e: return jsonify({"ok":False,"error":str(e)}),500
+@app.route('/trade', methods=['POST'])
+def trade():
+    if not BOT_ATIVO: return jsonify({"ok":False,"error":"Bot DESLIGADO"}),400
+    d=request.get_json(); symbol=d.get('symbol','XAUUSDm'); action=d.get('action','buy'); lot=float(d.get('lot',0.1))
+    a=analyze_v10(symbol, DEFAULT_TF)
+    res,msg=executar_ordem(symbol, action, lot, a)
+    if res: return jsonify({"ok":True,"ticket":res.order})
+    return jsonify({"ok":False,"error":msg}),400
+@app.route('/brain/status')
+def brain_status():
+    con=sqlite3.connect(DB); cur=con.cursor()
+    cur.execute("SELECT COUNT(*), SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END), SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END) FROM trade_memory")
+    total,wins,losses=cur.fetchone()
+    total=total or 0; wins=wins or 0; losses=losses or 0
+    wr=(wins/total*100) if total>0 else 0
+    con.close()
+    return jsonify({"total":total,"wins":wins,"losses":losses,"win_rate":round(wr,2),"estado":"NORMAL","sl":SL_TP[MODO_ATUAL]["sl"],"tp":SL_TP[MODO_ATUAL]["tp"],"min_score":MIN_SCORE})
+@app.route('/report/daily')
+def report_daily():
+    dados=calcular_relatorio()
+    return jsonify(dados)
+@app.route('/report/send', methods=['POST','GET'])
+def report_send():
+    dados=calcular_relatorio()
+    ok=enviar_whatsapp(dados["texto"])
+    salvar_historico_e_relatorios(dados)
+    return jsonify({"ok":ok,"texto":dados["texto"],"whatsapp":load_whatsapp_config()[0]})
+@app.route('/scanner')
+def scanner():
+    ranking=[]
+    ativos, flag = get_ativos_atuais()
+    for sym in ativos:
+        a=state["last_scan"].get(sym) or analyze_v10(sym, DEFAULT_TF)
+        ranking.append(a)
+    ranking.sort(key=lambda x: x.get("score",0), reverse=True)
+    return jsonify({"ok":True,"timestamp":datetime.datetime.now().isoformat(),"flag":flag,"ranking":ranking,"melhor": next((x for x in ranking if x["signal"] in ("BUY","SELL")), None)})
+
+if __name__=='__main__':
+    print("="*70)
+    print("JARVIS V10 MONSTRO 64 ATIVOS + FLAG FDS + 2x RELATORIO")
+    print(f"FOREX:{len(ATIVOS_FOREX)} INDICES:{len(ATIVOS_INDICES)} CRYPTO:{len(ATIVOS_CRYPTO)} = TOTAL {len(ATIVOS)}")
+    print("Seg-Sex: FULL | Sab-Dom: CRYPTO_WEEKEND")
+    print("Relatorio: 12:00 e 23:59 | Pastas: config/ data/ relatorios/")
+    print("="*70)
+    app.run(host='0.0.0.0', port=5000, debug=False)

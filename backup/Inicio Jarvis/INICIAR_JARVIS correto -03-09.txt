@@ -1,0 +1,34 @@
+@echo off
+title JARVIS V6.5 - SERVER CORRETO
+color 0A
+cd /d "%~dp0"
+
+echo Matando servidor antigo...
+taskkill /F /IM python.exe >nul 2>&1
+timeout /t 1 >nul
+
+echo [1/3] Tentando abrir MT5...
+if exist "C:\Program Files\MetaTrader 5\terminal64.exe" start "" "C:\Program Files\MetaTrader 5\terminal64.exe"
+if exist "C:\Program Files\Exness MT5\terminal64.exe" start "" "C:\Program Files\Exness MT5\terminal64.exe"
+if exist "C:\Program Files\MetaTrader 5 Terminal\terminal64.exe" start "" "C:\Program Files\MetaTrader 5 Terminal\terminal64.exe"
+if exist "C:\Program Files\Doo Prime MT5\terminal64.exe" start "" "C:\Program Files\Doo Prime MT5\terminal64.exe"
+
+echo [2/3] Iniciando JARVIS V6.5 CONSERVADORA em segundo plano...
+start /min "" cmd /c "title JARVIS SERVER 5000 & python server.py"
+
+echo [3/3] Aguardando servidor subir...
+timeout /t 4 >nul
+
+echo Abrindo navegador em http://127.0.0.1:5000
+start "" http://127.0.0.1:5000
+
+echo.
+echo ========================================
+echo  JARVIS V6.5 RODANDO - IGUAL SUA FOTO
+echo  Server: http://127.0.0.1:5000
+echo  Grafico + MARKET GUARD 60/100 + V6.5
+echo ========================================
+echo.
+echo Pode minimizar esta janela, NAO FECHE!
+echo.
+pause

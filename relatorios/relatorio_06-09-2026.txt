@@ -1,0 +1,15 @@
+JARVIS V10 - RELATORIO 12H
+06/09/2026 12:00 - CONSERVADORA
+BANCA:
+Inicial: $ 10753.91
+Atual: $ 10783.37
+Equity: $ 10782.85
+Aberto: $ -0.52
+Lucro Hoje: $ 29.46
+HOJE:
+Wins: 0 | Loss: 0 | Total: 0
+Taxa Hoje: 0.0%
+TOTAL GERAL:
+Wins: 6 | Loss: 16 | Total: 22
+Win Rate: 27.3%
+Acumulado: $ 308.65

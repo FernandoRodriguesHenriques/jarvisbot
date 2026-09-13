@@ -1,0 +1,18 @@
+@echo off
+echo MATANDO PROCESSOS ANTIGOS...
+taskkill /F /IM python.exe >nul 2>&1
+timeout /t 2 >nul
+
+echo INICIANDO JARVIS V8.1 CORRIGIDO...
+cd /d "%~dp0"
+start "JARVIS SERVER" cmd /k python server.py
+
+echo Aguardando 3 segundos...
+timeout /t 3 >nul
+
+echo ABRINDO NAVEGADOR NA PORTA CORRETA 5000...
+start http://127.0.0.1:5000
+
+echo JARVIS RODANDO! NAO FECHE ESSA JANELA PRETA.
+echo Se fechar, o robo para.
+pause

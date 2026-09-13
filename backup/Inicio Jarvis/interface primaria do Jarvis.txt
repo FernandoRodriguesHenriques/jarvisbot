@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS V5 - COM BOT</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0e0e12;color:#fff;font-family:Arial,sans-serif;overflow:hidden}
+.top{height:50px;background:#1a1a22;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid #333}
+.asset-select{background:#2a2a35;color:#fff;border:1px solid #444;padding:6px 8px;border-radius:6px;font-weight:bold;font-size:12px}
+.balance{color:#ff3b30;font-weight:bold;font-size:13px}
+.main{display:flex;height:calc(100vh - 50px)}
+.chart-wrap{flex:1;display:flex;flex-direction:column}
+.chart-area{flex:1;background:#13131a}
+.bottom{height:120px;background:#0e0e12;display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid #222}
+.controls{background:#1a1a22;padding:8px;border-radius:8px;border:1px solid #333;min-width:150px}
+.controls label{font-size:10px;color:#aaa}
+.controls select{background:#0e0e12;color:#fff;border:1px solid #444;padding:5px;border-radius:5px;width:100%;margin-top:3px;font-size:12px}
+.btn-trade{flex:1;height:65px;border:0;border-radius:10px;font-weight:bold;cursor:pointer;font-size:14px}
+.btn-call{background:#00c853;color:#000}.btn-put{background:#ff1744;color:#fff}
+.sidebar{width:340px;background:#15151d;border-left:1px solid #222;display:flex;flex-direction:column;overflow:auto}
+.panel{padding:10px;border-bottom:1px solid #222}
+.panel h3{font-size:10px;color:#888;margin-bottom:8px;letter-spacing:1px}
+.analysis-box{background:#1e1e2a;border-radius:8px;padding:10px;border:1px solid #333}
+.tf-row{display:flex;gap:4px;margin-bottom:8px}
+.tf-btn{flex:1;padding:6px 0;background:#2a2a35;color:#aaa;border:1px solid #444;border-radius:5px;font-size:11px;cursor:pointer;font-weight:bold}
+.tf-btn.active{background:#fff;color:#000;border-color:#fff}
+.signal{font-size:22px;font-weight:bold;text-align:center;padding:10px;border-radius:6px;margin:8px 0}
+.signal.CALL{background:#00c853;color:#000}.signal.PUT{background:#ff1744;color:#fff}.signal.AGUARDAR{background:#333;color:#888}
+.metric{display:flex;justify-content:space-between;font-size:11px;margin:4px 0}
+.metric b{color:#fff;font-size:11px}
+.pos-item{display:flex;justify-content:space-between;align-items:center;background:#1e1e2a;padding:7px;border-radius:6px;margin:5px 0;font-size:11px;border:1px solid #333}
+.close-btn{background:#ff3b30;color:#fff;border:0;padding:4px 8px;border-radius:4px;cursor:pointer}
+/* BOT */
+.bot-panel{background:linear-gradient(135deg,#1a1a22,#15151d);border:1px solid #333;border-radius:10px;padding:10px;margin-bottom:8px}
+.bot-header{display:flex;justify-content:space-between;align-items:center}
+.bot-toggle{padding:8px 16px;border-radius:20px;border:0;font-weight:bold;cursor:pointer;font-size:12px;transition:0.3s}
+.bot-off{background:#333;color:#888}.bot-on{background:#00c853;color:#000;box-shadow:0 0 15px #00c853;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 10px #00c853}50%{box-shadow:0 0 20px #00c853}}
+.bot-stats{font-size:10px;color:#aaa;margin-top:6px;display:flex;justify-content:space-between}
+</style>
+</head>
+<body>
+<div class="top">
+  <select id="asset" class="asset-select" onchange="changeAsset()">
+    <option value="EURUSDm">EUR/USD</option><option value="GBPUSDm">GBP/USD</option><option value="USDJPYm">USD/JPY</option><option value="AUDUSDm">AUD/USD</option><option value="BTCUSDm">BTC/USD</option><option value="XAUUSDm">OURO</option><option value="US500m">S&P500</option>
+  </select>
+  <div id="saldoTop" class="balance">$ 0.00</div>
+</div>
+<div class="main">
+  <div class="chart-wrap">
+    <div class="chart-area"><div id="tradingview_widget" style="height:100%"></div></div>
+    <div class="bottom">
+      <div class="controls">
+        <label>Manual</label>
+        <select id="lote"><option value="0.01">$1</option><option value="0.05" selected>$5</option><option value="0.10">$10</option><option value="0.20">$20</option></select>
+        <div id="log" style="font-size:10px;color:#0f0;margin-top:4px">V5 BOT pronto</div>
+      </div>
+      <button class="btn-trade btn-call" onclick="trade('buy')">CALL ▲<br><small id="callVal">$5</small></button>
+      <button class="btn-trade btn-put" onclick="trade('sell')">PUT ▼<br><small id="putVal">$5</small></button>
+    </div>
+  </div>
+  <div class="sidebar">
+    <div class="panel">
+      <div class="bot-panel">
+        <div class="bot-header">
+          <span style="font-size:12px;font-weight:bold">🤖 BOT AUTOMATICO</span>
+          <button id="botBtn" class="bot-toggle bot-off" onclick="toggleBot()">OFF</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <div style="flex:1"><label style="font-size:9px;color:#888">Lote BOT</label><select id="botLote" style="width:100%;background:#0e0e12;color:#fff;border:1px solid #444;border-radius:4px;padding:4px;font-size:11px"><option value="0.01">$1</option><option value="0.05" selected>$5</option><option value="0.10">$10</option><option value="0.20">$20</option></select></div>
+          <div style="flex:1"><label style="font-size:9px;color:#888">Conf. Min</label><select id="botConf" style="width:100%;background:#0e0e12;color:#fff;border:1px solid #444;border-radius:4px;padding:4px;font-size:11px"><option value="70">70%</option><option value="80" selected>80%</option><option value="85">85%</option><option value="90">90%</option></select></div>
+        </div>
+        <div class="bot-stats">
+          <span>Trades: <b id="botTrades" style="color:#fff">0</b></span>
+          <span>Ultimo: <b id="botLast" style="color:#fff">-</b></span>
+          <span id="botCooldown" style="color:#ff3b30"></span>
+        </div>
+      </div>
+      <h3>⏱️ TEMPO</h3>
+      <div class="tf-row">
+        <button class="tf-btn active" onclick="setTF('1',this)">1m</button>
+        <button class="tf-btn" onclick="setTF('5',this)">5m</button>
+        <button class="tf-btn" onclick="setTF('15',this)">15m</button>
+        <button class="tf-btn" onclick="setTF('30',this)">30m</button>
+        <button class="tf-btn" onclick="setTF('60',this)">1h</button>
+      </div>
+      <h3>🤖 ANALISE V5</h3>
+      <div class="analysis-box">
+        <div class="metric"><span>Preco</span><b id="a_price">-</b></div>
+        <div class="metric"><span>EMA 9/21</span><b id="a_ema">-</b></div>
+        <div class="metric"><span>RSI</span><b id="a_rsi">-</b></div>
+        <div class="metric"><span>MACD</span><b id="a_macd">-</b></div>
+        <div class="metric"><span>BB</span><b id="a_bb">-</b></div>
+        <div id="a_signal" class="signal AGUARDAR">AGUARDAR</div>
+        <div style="text-align:center;font-size:11px">Conf: <b id="a_conf">0%</b></div>
+        <div id="a_detalhes" style="font-size:9px;color:#666;margin-top:4px;text-align:center">-</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>📋 ORDENS</h3>
+      <div id="posList" style="color:#666;font-size:11px">Nenhuma</div>
+    </div>
+  </div>
+</div>
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+let currentSymbol='EURUSDm', currentTF='1', botActive=false, botTradeCount=0, lastBotTrade=0, currentSignal='AGUARDAR', currentConf=0;
+function getTVSymbol(s){return s.replace('m','').replace('M','');}
+function changeAsset(){currentSymbol=document.getElementById('asset').value; loadChart();}
+function setTF(tf,btn){currentTF=tf; document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); loadChart();}
+function loadChart(){
+  document.getElementById('tradingview_widget').innerHTML='';
+  let sym=getTVSymbol(currentSymbol);
+  let map={'EURUSD':'FX:EURUSD','GBPUSD':'FX:GBPUSD','USDJPY':'FX:USDJPY','AUDUSD':'FX:AUDUSD','BTCUSD':'BINANCE:BTCUSD','XAUUSD':'OANDA:XAUUSD','US500':'OANDA:SPX500USD'};
+  new TradingView.widget({"autosize":true,"symbol":map[sym]||'FX:'+sym,"interval":currentTF,"timezone":"America/Sao_Paulo","theme":"dark","style":"1","locale":"br","container_id":"tradingview_widget"});
+}
+document.getElementById('lote').addEventListener('change',e=>{let v=e.target.value*100; document.getElementById('callVal').innerText='$'+v; document.getElementById('putVal').innerText='$'+v;});
+function toggleBot(){
+  botActive=!botActive;
+  let btn=document.getElementById('botBtn');
+  if(botActive){btn.innerText='ON ●'; btn.className='bot-toggle bot-on'; log('BOT LIGADO!');}
+  else{btn.innerText='OFF'; btn.className='bot-toggle bot-off'; log('BOT DESLIGADO'); document.getElementById('botCooldown').innerText='';}
+}
+async function updateSaldo(){try{let r=await fetch('http://127.0.0.1:5000/balance'); let d=await r.json(); if(d.ok)document.getElementById('saldoTop').innerText='$ '+d.balance.toFixed(2)+' | L: '+d.profit.toFixed(2);}catch(e){}}
+async function updatePositions(){try{let r=await fetch('http://127.0.0.1:5000/positions'); let d=await r.json(); if(d.ok){let h=''; if(d.positions.length==0)h='Nenhuma'; else d.positions.forEach(p=>{let c=p.profit>=0?'#00c853':'#ff1744'; h+=<div class="pos-item"><div><b>${p.symbol}</b> ${p.type.toUpperCase()}<br><span style="color:${c}">$${p.profit.toFixed(2)}</span></div><button class="close-btn" onclick="closePos(${p.ticket})">FECHAR</button></div>}); document.getElementById('posList').innerHTML=h; return d.positions.length;} }catch(e){} return 0}
+async function updateAnalysis(){
+  try{
+    let r=await fetch('http://127.0.0.1:5000/analysis?symbol='+currentSymbol+'&tf='+currentTF);
+    let d=await r.json();
+    if(d.ok){
+      document.getElementById('a_price').innerText=d.price.toFixed(5);
+      document.getElementById('a_ema').innerText=d.ema9.toFixed(5)+' / '+d.ema21.toFixed(5);
+      document.getElementById('a_rsi').innerText=d.rsi;
+      document.getElementById('a_macd').innerText=d.macd+' / '+d.macd_signal;
+      document.getElementById('a_bb').innerText=d.bb_lower.toFixed(5)+' - '+d.bb_upper.toFixed(5);
+      let s=document.getElementById('a_signal'); s.className='signal '+d.sinal; s.innerText=d.sinal;
+      document.getElementById('a_conf').innerText=d.confianca+'%';
+      document.getElementById('a_detalhes').innerText=d.detalhes;
+      currentSignal=d.sinal; currentConf=d.confianca;
+      // BOT LOGIC
+      if(botActive){ checkBot(); }
+    }
+  }catch(e){}
+}
+async function checkBot(){
+  let confMin=parseInt(document.getElementById('botConf').value);
+  let now=Date.now()/1000;
+  let cooldown=120; // 2 min
+  if(now-lastBotTrade < cooldown){
+    let rest=Math.ceil(cooldown-(now-lastBotTrade));
+    document.getElementById('botCooldown').innerText=rest+'s cooldown';
+    return;
+  }
+  document.getElementById('botCooldown').innerText='PRONTO';
+  if(currentSignal=='AGUARDAR' || currentConf < confMin) return;
+  let posCount=await updatePositions();
+  if(posCount>0) { document.getElementById('botCooldown').innerText='Com ordem aberta'; return; } // só 1 por vez
+  // EXECUTA BOT
+  let lote=document.getElementById('botLote').value;
+  let tipo = currentSignal=='CALL'? 'buy' : 'sell';
+  log('BOT: '+currentSignal+' '+currentConf+'%');
+  let res=await fetch('http://127.0.0.1:5000/trade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:tipo,symbol:currentSymbol,lot:parseFloat(lote)})});
+  let d=await res.json();
+  if(d.ok){
+    botTradeCount++; lastBotTrade=now;
+    document.getElementById('botTrades').innerText=botTradeCount;
+    document.getElementById('botLast').innerText=currentSignal+' '+currentConf+'%';
+    log('BOT ABRIU '+d.ticket);
+    updatePositions();
+  }
+}
+async function trade(t){let l=document.getElementById('lote').value; log('Manual...'); let r=await fetch('http://127.0.0.1:5000/trade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:t,symbol:currentSymbol,lot:parseFloat(l)})}); let d=await r.json(); if(d.ok){log('ABERTA '+d.ticket); updatePositions(); updateSaldo();}else{log(d.error);}}
+async function closePos(t){if(!confirm('Fechar '+t+'?'))return; let r=await fetch('http://127.0.0.1:5000/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket:t})}); let d=await r.json(); if(d.ok){log('Fechada'); updatePositions(); updateSaldo();}}
+function log(m){document.getElementById('log').innerText=m;}
+loadChart(); setInterval(()=>{updateSaldo(); updatePositions(); updateAnalysis();},2500); updateSaldo(); updatePositions(); updateAnalysis();
+</script>
+</body>
+</html>

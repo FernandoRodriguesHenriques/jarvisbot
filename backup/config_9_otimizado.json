@@ -1,0 +1,62 @@
+{
+  "ADAUSDm": {
+    "min_score": 55,
+    "default_rr": 1.5,
+    "spread_limit": 500
+  },
+  "DOGEUSDm": {
+    "min_score": 65,
+    "default_rr": 1.5,
+    "spread_limit": 500
+  },
+  "CADJPYm": {
+    "min_score": 40,
+    "default_rr": 1.5,
+    "spread_limit": 100
+  },
+  "NZDCADm": {
+    "min_score": 55,
+    "default_rr": 1.5,
+    "spread_limit": 60
+  },
+  "GBPNZDm": {
+    "min_score": 40,
+    "default_rr": 1.5,
+    "spread_limit": 60
+  },
+  "GBPCADm": {
+    "min_score": 40,
+    "default_rr": 1.5,
+    "spread_limit": 60
+  },
+  "CADCHFm": {
+    "min_score": 55,
+    "default_rr": 1.5,
+    "spread_limit": 60
+  },
+  "NZDJPYm": {
+    "min_score": 40,
+    "default_rr": 1.5,
+    "spread_limit": 100
+  },
+  "LINKUSDm": {
+    "min_score": 65,
+    "default_rr": 1.5,
+    "spread_limit": 100
+  },
+  "AUDCADm": {
+    "min_score": 40,
+    "default_rr": 1.5,
+    "spread_limit": 100
+  },
+  "EURAUDm": {
+    "min_score": 55,
+    "default_rr": 1.5,
+    "spread_limit": 500
+  },
+  "HK50m": {
+    "min_score": 40,
+    "default_rr": 1.5,
+    "spread_limit": 500
+  }
+}

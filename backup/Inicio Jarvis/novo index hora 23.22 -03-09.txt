@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS V7 - RESET</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#d1d4dc;font-family:sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+header{background:#131722;height:28px;display:flex;align-items:center;padding:0 10px;border-bottom:1px solid #2a2e39;font-size:11px;font-weight:800}
+.main{flex:1;display:flex;overflow:hidden}
+.chart-area{flex:1;background:#000;display:flex;flex-direction:column}
+#tv_chart{flex:1;min-height:0}
+.sidebar{width:380px;background:#131722;border-left:1px solid #2a2e39;display:flex;flex-direction:column;overflow-y:auto}
+.box{background:#1e222d;margin:5px;border-radius:6px;padding:7px;border:1px solid #2a2e39}
+.row{display:flex;justify-content:space-between;align-items:center;margin:2px 0;font-size:10px;gap:4px}
+select{background:#2a2e39;color:#fff;border:1px solid #363a45;border-radius:4px;padding:4px 6px;font-size:10px;flex:1}
+.banca-box{background:#000;border:1px solid #2a2e39;border-radius:6px;padding:6px;margin-bottom:6px}
+.banca-row{display:flex;justify-content:space-between;font-size:10px;margin:1px 0}
+.pos-item{display:flex;justify-content:space-between;align-items:center;background:#2a2e39;padding:4px 6px;border-radius:4px;margin:2px 0;font-size:9px}
+.btn-fechar{background:#ff3d57;color:#fff;border:none;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:800;cursor:pointer}
+.btn-trade{flex:1;padding:8px;border:none;border-radius:4px;font-weight:900;font-size:11px;cursor:pointer}
+.btn-trade:disabled{opacity:0.3}
+.report-item{background:#2a2e39;padding:4px 6px;border-radius:4px;margin:2px 0;font-size:9px;display:flex;justify-content:space-between}
+.btn-toggle{padding:4px 10px;border:none;border-radius:12px;font-size:10px;font-weight:900;cursor:pointer}
+.btn-toggle.on{background:#00c853;color:#000}
+.btn-toggle.off{background:#ff3d57;color:#fff}
+.btn-reset{background:#000;color:#ff3d57;border:1px solid #ff3d57;border-radius:4px;padding:5px;font-size:9px;font-weight:900;cursor:pointer;flex:1}
+</style>
+<script src="https://s3.tradingview.com/tv.js"></script>
+</head>
+<body>
+<header><span>JARVIS V7 MULTI - BANCA ITERATIVA - 12 PADROES</span><span id="accountHeader" style="margin-left:auto;color:#00c853">$ --</span></header>
+<div class="main">
+<div class="chart-area">
+<div id="tv_chart"></div>
+<div style="padding:6px 8px;border-top:1px solid #2a2e39;background:#000;max-height:110px;overflow-y:auto">
+<div style="font-size:10px;font-weight:800;color:#2962ff">RELATORIO 12 PADROES (começa do zero)</div>
+<div id="report12" style="font-size:9px;color:#888;margin-top:4px">Sem trades ainda</div>
+</div>
+</div>
+<div class="sidebar">
+<div class="box">
+<div class="banca-box">
+<div class="banca-row" style="font-weight:900;font-size:11px"><span>💰 BANCA ITERATIVA AO VIVO</span><span id="bancaValor" style="color:#00c853">$ 0,00</span></div>
+<div class="banca-row"><span>Equity</span><span id="equityValor">$ 0,00</span></div>
+<div class="banca-row"><span>Lucro Flutuante</span><span id="profitValor">0,00 USD</span></div>
+<div class="banca-row"><span>Margem</span><span id="margemValor">0%</span></div>
+<div class="banca-row"><span>Livre</span><span id="freeValor">$ 0,00</span></div>
+</div>
+<div class="row"><span>ROBO</span><button id="botBtn" onclick="toggleBot()" class="btn-toggle on">ON</button><span id="botStatusText" style="font-size:9px;color:#00c853">LIGADO</span></div>
+<div class="row"><select id="lote"><option value="0.2">Lote 0.20</option><option value="0.1" selected>0.10</option><option value="0.05">0.05</option></select><select id="modo" onchange="trocarModo()" style="background:#2962ff;color:#fff;font-weight:800"><option value="conservadora">🛡️ CONSERV.</option><option value="agressiva">🔥 AGRESSIVO</option></select></div>
+<div class="row"><span>Trades hoje</span><span id="trades">0/15</span> <span id="brainEstado" style="background:#00c853;color:#fff;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:800">NORMAL</span></div>
+</div>
+<div class="box">
+<div style="display:flex;justify-content:space-between;font-size:10px;font-weight:800"><span>SCANNER 7 ATIVOS</span><span id="ativosCount">7</span></div>
+<div id="scanner" style="margin-top:4px"></div>
+</div>
+<div class="box">
+<div class="row"><span>ATIVO</span><select id="ativoSel" onchange="mudarAtivo()"></select></div>
+<div class="row"><span>Preço</span><span id="preco">--</span> <span id="spread">--</span></div>
+<div class="row"><span>Guard</span><span id="score">--</span> <span id="badge" style="background:#ff9800;color:#000;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:800">--</span></div>
+<div class="row"><span>Padroes 12</span><span id="patterns" style="color:#2962ff;font-weight:800">--</span></div>
+<div class="row"><span>Sinal</span><span id="signal" style="font-weight:900">AGUARDAR</span> <span id="conf">0%</span></div>
+<div style="display:flex;gap:6px;margin-top:6px"><button id="btnCall" class="btn-trade" style="background:#00c853;color:#000" onclick="enviarTrade('buy')">CALL ▲</button><button id="btnPut" class="btn-trade" style="background:#ff3d57;color:#fff" onclick="enviarTrade('sell')">PUT ▼</button></div>
+<div id="bloqueioMsg" style="font-size:9px;color:#ff3d57;margin-top:4px;display:none"></div>
+</div>
+<div class="box">
+<div style="display:flex;justify-content:space-between;font-size:10px;font-weight:800"><span>ORDENS ABERTAS</span><span id="posCount">0</span></div>
+<div id="ordens" style="margin-top:4px;max-height:180px;overflow-y:auto"></div>
+<div style="display:flex;gap:4px;margin-top:6px">
+<button onclick="resetarBrain()" class="btn-reset">🔄 RESET BRAIN - COMEÇAR DO ZERO</button>
+<button onclick="fecharTodas()" style="flex:1;background:#363a45;color:#fff;border:1px solid #ff3d57;border-radius:4px;padding:5px;font-size:9px;font-weight:800">FECHAR TODAS</button>
+</div>
+<div id="hist" style="font-size:9px;max-height:80px;overflow-y:auto;margin-top:6px;border-top:1px solid #2a2e39;padding-top:4px"></div>
+</div>
+</div>
+</div>
+<script>
+let ATIVO=localStorage.getItem('JARVIS_ATIVO')||'XAUUSDm';
+let MODO=localStorage.getItem('JARVIS_MODO')||'conservadora';
+let BOT_ON=true;
+let tvWidget=null;
+document.getElementById('modo').value=MODO;
+function tvSymbol(mt5sym){const map={"XAUUSDm":"OANDA:XAUUSD","BTCUSDm":"BINANCE:BTCUSD","EURUSDm":"FX:EURUSD","GBPUSDm":"FX:GBPUSD","US30m":"FOREXCOM:US30","NAS100m":"NASDAQ:NDX","USDJPYm":"FX:USDJPY"};return map[mt5sym]||"OANDA:XAUUSD";}
+function carregarGrafico(){document.getElementById('tv_chart').innerHTML="";tvWidget = new TradingView.widget({"autosize": true,"symbol": tvSymbol(ATIVO),"interval": "1","timezone": "America/Sao_Paulo","theme": "dark","style": "1","locale": "br","backgroundColor": "#000000","gridColor": "rgba(42, 46, 57, 0.3)","container_id": "tv_chart","hide_top_toolbar": false,"hide_legend": false,"allow_symbol_change": false,"studies": ["EMA 9","EMA 21"]});}
+function trocarModo(){MODO=document.getElementById('modo').value;localStorage.setItem('JARVIS_MODO',MODO);fetch('/set_modo?modo='+MODO);}
+function mudarAtivo(){ATIVO=document.getElementById('ativoSel').value;localStorage.setItem('JARVIS_ATIVO',ATIVO); carregarGrafico();}
+function toggleBot(){fetch('/bot/toggle').then(r=>r.json()).then(d=>{BOT_ON=d.ativo; atualizarBotUI();});}
+function atualizarBotUI(){let btn=document.getElementById('botBtn');let txt=document.getElementById('botStatusText');let callBtn=document.getElementById('btnCall');let putBtn=document.getElementById('btnPut');let msg=document.getElementById('bloqueioMsg');if(BOT_ON){btn.textContent='ON';btn.className='btn-toggle on';txt.textContent='LIGADO';txt.style.color='#00c853';callBtn.disabled=false;putBtn.disabled=false;msg.style.display='none';}else{btn.textContent='OFF';btn.className='btn-toggle off';txt.textContent='DESLIGADO';txt.style.color='#ff3d57';callBtn.disabled=true;putBtn.disabled=true;msg.textContent='⛔ Bot DESLIGADO';msg.style.display='block';}}
+function carregarBotStatus(){fetch('/bot/status').then(r=>r.json()).then(d=>{BOT_ON=d.ativo; atualizarBotUI();});}
+function carregarAtivos(){fetch('/assets').then(r=>r.json()).then(lista=>{let sel=document.getElementById('ativoSel');sel.innerHTML="";lista.forEach(s=>{let o=document.createElement('option');o.value=s;o.textContent=s;if(s===ATIVO)o.selected=true;sel.appendChild(o);});document.getElementById('ativosCount').textContent=lista.length;});}
+function carregarBanca(){fetch('/account').then(r=>r.json()).then(c=>{document.getElementById('bancaValor').textContent=`$ ${c.balance.toLocaleString('pt-BR',{minimumFractionDigits:2})}`;document.getElementById('equityValor').textContent=`$ ${c.equity.toLocaleString('pt-BR',{minimumFractionDigits:2})}`;let p=document.getElementById('profitValor');p.textContent=(c.profit>=0?'+':'')+c.profit.toFixed(2)+' USD';p.style.color=c.profit>=0?'#00c853':'#ff3d57';document.getElementById('margemValor').textContent=c.margin_level?c.margin_level.toFixed(2)+'%':'--%';document.getElementById('freeValor').textContent=`$ ${c.free_margin.toLocaleString('pt-BR',{minimumFractionDigits:2})}`;document.getElementById('accountHeader').textContent=`$ ${c.equity.toFixed(2)} | ${c.margin_level?c.margin_level.toFixed(0):0}% margem | ${c.profit>=0?'+':''}${c.profit.toFixed(2)} USD`;});}
+function carregarScanner(){fetch('/analysis_all').then(r=>r.json()).then(lista=>{let html="";lista.forEach(a=>{let cor=a.guard>=80?'#00c853':a.guard>=60?'#ff9800':'#ff3d57';let lib=a.liberado?'✅':'❌';html+=`<div class="report-item"><span>${lib} ${a.symbol} <span style="color:${cor}">${a.guard}</span></span><span>${a.spread}pts ${a.guard_status}</span></div>`;});document.getElementById('scanner').innerHTML=html;});}
+function loopAnalysis(){fetch(`/analysis?symbol=${ATIVO}&tf=1`).then(r=>r.json()).then(d=>{document.getElementById('preco').textContent=d.price;document.getElementById('spread').textContent=d.spread+'pts';document.getElementById('score').textContent=d.guard+'/100';document.getElementById('patterns').textContent=d.patterns && d.patterns.length>0? d.patterns.join(',') : 'Nenhum dos 12';document.getElementById('signal').textContent=d.signal;document.getElementById('conf').textContent=d.confidence+'%';document.getElementById('trades').textContent=(d.trades_hoje||0)+'/15';let badge=document.getElementById('badge');if(d.guard_status==='SEGURO'){badge.textContent='SEGURO';badge.style.background='#00c853';}else if(d.guard_status==='LIBERADO'){badge.textContent='LIBERADO';badge.style.background='#00c853';}else if(d.reason && d.reason.includes('BLOQUEADO')){badge.textContent='BLOQUEADO';badge.style.background='#ff3d57';}else{badge.textContent='ATENCAO';badge.style.background='#ff9800';}});}
+function carregarPosicoes(){fetch('/positions').then(r=>r.json()).then(lista=>{document.getElementById('posCount').textContent=lista.length;let html="";if(lista.length==0)html="<span style='color:#666;font-size:9px'>Nenhuma - pronto para começar do zero</span>";else lista.forEach(p=>{let cor=p.profit>=0?'#00c853':'#ff3d57';html+=`<div class="pos-item"><span>${p.time} ${p.symbol} ${p.type.toUpperCase()} ${p.volume} <span style="color:${cor}">${p.profit>=0?'+':''}${p.profit} USD</span></span><button class="btn-fechar" onclick="fecharOrdem(${p.ticket})">X FECHAR</button></div>`;});document.getElementById('ordens').innerHTML=html;});}
+function fecharOrdem(ticket){if(!confirm(`Fechar ${ticket}?`))return;fetch('/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket})}).then(r=>r.json()).then(d=>{if(d.ok){carregarPosicoes();carregarBanca();carregarBrain();}else alert(d.error);});}
+function resetarBrain(){
+  if(!confirm("⚠️ RESETAR BRAIN? Apagar histórico, zerar 12 padrões, voltar para NORMAL. Banca continua. Começar do zero?")) return;
+  fetch('/brain/reset',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok){alert("✅ Brain resetado! Começando do zero"); carregarBrain(); carregarBanca();}
+    else alert("Erro: "+d.error);
+  });
+}
+function fecharTodas(){if(!confirm("Fechar TODAS?"))return;fetch('/positions').then(r=>r.json()).then(lista=>{lista.forEach(p=>{fetch('/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket:p.ticket})}).then(()=>{carregarPosicoes();carregarBanca();});});});}
+function enviarTrade(action){if(!BOT_ON){alert("Bot DESLIGADO"); return;} let lot=document.getElementById('lote').value;fetch('/trade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:ATIVO,action,lot})}).then(r=>r.json()).then(d=>{if(!d.ok)alert(d.error);else{carregarPosicoes();carregarBanca();}});}
+function carregarBrain(){fetch('/brain/status').then(r=>r.json()).then(b=>{let el=document.getElementById('brainEstado');el.textContent=b.estado; el.style.background=b.estado==='PROTECTION'?'#ff3d57':b.estado==='CAUTION'?'#ff9800':'#00c853';});fetch('/brain/trades').then(r=>r.json()).then(lista=>{let html="";lista.forEach(t=>{let cor=t.result==='WIN'?'#00c853':'#ff3d57';html+=`<div class="report-item"><span>${t.symbol} ${t.pattern}</span><span style="color:${cor}">${t.result} ${t.profit}</span></div>`;});document.getElementById('hist').innerHTML=html||'Brain zerado - aguardando primeiro trade';});fetch('/report/12').then(r=>r.json()).then(rep=>{let keys=Object.keys(rep);let html="";if(keys.length===0)html="Sem trades ainda - 12 padrões monitorados. Depois da primeira operação que você fechar com X FECHAR, ele já atualiza.";else{keys.forEach(pat=>{html+=`<div style="font-weight:800;margin-top:6px;color:#2962ff">${pat}</div>`;rep[pat].forEach(s=>{html+=`<div class="report-item"><span>${s.symbol}</span><span>${s.trades} | ${s.wins}W ${s.losses}L | ${s.win_rate}%</span></div>`;});});}document.getElementById('report12').innerHTML=html;});}
+carregarAtivos(); carregarBotStatus(); carregarGrafico();
+setInterval(carregarBanca,1000);
+setInterval(carregarScanner,3000);
+setInterval(loopAnalysis,2000);
+setInterval(carregarPosicoes,2000);
+setInterval(carregarBrain,5000);
+carregarBanca();carregarScanner();loopAnalysis();carregarPosicoes();carregarBrain();
+</script>
+</body>
+</html>

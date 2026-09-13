@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS V10 - FULL + FDS</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#131722;color:#d1d4dc;font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+header{background:#131722;height:28px;display:flex;align-items:center;padding:0 10px;border-bottom:1px solid #2a2e39;font-size:11px;font-weight:800}
+.top-tf{background:#131722;border-bottom:1px solid #2a2e39;padding:4px 8px;display:flex;gap:4px;align-items:center}
+.tf-btn{background:transparent;border:1px solid #2a2e39;color:#2962ff;padding:3px 8px;border-radius:3px;font-size:10px;font-weight:800;cursor:pointer}
+.tf-btn.active{background:#2962ff;color:#fff}
+#tv_chart{height:58vh;min-height:360px;background:#000}
+.bottom{display:flex;height:42vh;background:#1e222d;border-top:1px solid #2a2e39;overflow:hidden}
+.panel{border-right:1px solid #2a2e39;padding:6px;overflow-y:auto;display:flex;flex-direction:column}
+.panel-left{flex:0 0 32%}.panel-center{flex:0 0 28%}.panel-right{flex:1}
+.flag-btn{padding:5px 12px;border-radius:4px;font-size:10px;font-weight:900;cursor:pointer;border:1px solid #2a2e39;margin-right:4px}
+.flag-btn.active-semana{background:#00c853;color:#000;border-color:#00c853}
+.flag-btn.active-fds{background:#ff9800;color:#000;border-color:#ff9800}
+.flag-btn.inactive{background:transparent;color:#666}
+.filtro{background:transparent;border:1px solid #2a2e39;color:#888;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:800;cursor:pointer;margin:1px}
+.filtro.active{background:#2962ff;color:#fff;border-color:#2962ff}
+.filtro.sinais{border-color:#00c853;color:#00c853}.filtro.sinais.active{background:#00c853;color:#000}
+.report-item{background:#2a2e39;padding:4px 6px;border-radius:4px;margin:2px 0;font-size:9px;display:flex;justify-content:space-between;cursor:pointer}
+.banca-box{background:#000;border:1px solid #2a2e39;border-radius:6px;padding:6px;margin-bottom:6px}
+.banca-row{display:flex;justify-content:space-between;font-size:10px;margin:2px 0}
+.btn-toggle{padding:3px 10px;border:none;border-radius:12px;font-size:10px;font-weight:900;cursor:pointer}
+.btn-toggle.on{background:#00c853;color:#000}.btn-toggle.off{background:#ff3d57;color:#fff}
+.btn-trade{flex:1;padding:10px;border:none;border-radius:4px;font-weight:900;font-size:12px;cursor:pointer}
+.candle-box{background:#000;border:1px solid #2a2e39;border-radius:6px;padding:6px;text-align:center;margin-bottom:6px}
+.candle-time{font-size:20px;font-weight:900;color:#fff}
+.relatorio-box{background:#000;border:1px solid #00c853;border-radius:6px;padding:6px;margin-top:6px;white-space:pre-wrap;font-size:9px;line-height:12px;max-height:180px;overflow-y:auto}
+</style>
+<script src="https://s3.tradingview.com/tv.js"></script>
+</head>
+<body>
+<header><span id="headerTitle">JARVIS V10 MONSTRO 64 ATIVOS</span><span id="flagInfo" style="margin-left:10px;background:#00c853;color:#000;padding:2px 8px;border-radius:10px;font-size:9px">FULL</span><span id="accountHeader" style="margin-left:auto;color:#00c853">$ 0,00</span></header>
+<div class="top-tf"><span style="font-size:9px;color:#666">TIMEFRAME:</span><button class="tf-btn" data-tf="M1" onclick="trocarTF('M1')">M1</button><button class="tf-btn active" data-tf="M15" onclick="trocarTF('M15')">M15</button><button class="tf-btn" data-tf="M30" onclick="trocarTF('M30')">M30</button><button class="tf-btn" data-tf="H1" onclick="trocarTF('H1')">H1</button><button class="tf-btn" data-tf="H4" onclick="trocarTF('H4')">H4</button><span id="tfInfo" style="margin-left:auto;font-size:9px;color:#2962ff">M15</span></div>
+<div id="tv_chart"></div>
+<div class="bottom">
+<div class="panel panel-left"><div style="display:flex;justify-content:space-between;font-size:10px;font-weight:800"><span>SCANNER FLAGS</span><span id="ativosCount">0/0</span></div><div id="flagBtns" style="display:flex;margin:6px 0"></div><div style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:4px"><button class="filtro active" id="fALL" onclick="filtrar('ALL')">ALL</button><button class="filtro" id="fFOREX" onclick="filtrar('FOREX')">FOREX</button><button class="filtro" id="fINDICE" onclick="filtrar('INDICE')">INDICE</button><button class="filtro" id="fCRYPTO" onclick="filtrar('CRYPTO')">CRYPTO</button><button class="filtro sinais" id="fSINAL" onclick="filtrar('SINAL')">SINAIS</button></div><div id="scanner" style="flex:1;overflow-y:auto"></div><div style="display:flex;gap:6px;margin-top:6px"><button class="btn-trade" style="background:#00c853;color:#000" onclick="enviarTrade('buy')">CALL</button><button class="btn-trade" style="background:#ff3d57;color:#fff" onclick="enviarTrade('sell')">PUT</button></div></div>
+<div class="panel panel-center"><div class="banca-box"><div class="banca-row" style="font-weight:900;font-size:11px"><span>BANCA ITERATIVA</span><span id="bancaValor" style="color:#00c853">$ 0.00</span></div><div class="banca-row"><span>Equity</span><span id="equityValor">$ 0.00</span></div><div class="banca-row"><span>Lucro Hoje</span><span id="profitHoje">$ 0.00</span></div><div class="banca-row"><span>Margem</span><span id="margemValor">0%</span></div></div><div style="display:flex;justify-content:space-between;font-size:10px;margin:4px 0"><span>ROBO</span><button id="botBtn" onclick="toggleBot()" class="btn-toggle off">OFF</button><span id="botStatusText">DESLIGADO</span></div><div style="display:flex;gap:4px"><select id="lote"><option value="0.1">0.10</option><option value="0.2">0.20</option></select><select id="modo" onchange="trocarModo()" style="background:#2962ff;color:#fff;font-weight:800"><option value="conservadora">CONSERV.</option><option value="agressiva">AGRESSIVO</option></select></div><div style="margin-top:8px;border-top:1px solid #2a2e39;padding-top:4px"><div style="display:flex;justify-content:space-between;font-size:10px;font-weight:800"><span>ORDENS ABERTAS</span><span id="posCount">0</span></div><div id="ordens" style="max-height:90px;overflow-y:auto;font-size:9px"></div></div></div>
+<div class="panel panel-right"><div style="display:flex;justify-content:space-between"><span>ATIVO</span><select id="ativoSel" onchange="mudarAtivo()" style="background:#2a2e39;color:#fff;border:1px solid #363a45;border-radius:4px;padding:4px 6px;font-size:10px;flex:1;margin-left:6px"></select></div><div class="candle-box"><div style="font-size:9px;color:#888"><span id="ativoLabel">XAUUSDm</span> | <span id="tfLabelSide">M15</span></div><div style="font-size:10px;color:#888"><span id="candleClock">--:--:--</span></div></div><div style="display:flex;justify-content:space-between;font-size:10px"><span>Guard</span><span id="score">--</span><span id="badge">--</span></div><div style="display:flex;justify-content:space-between;font-size:10px"><span>Sinal</span><span id="signal">AGUARDAR</span><span id="conf">0%</span></div>
+<div class="relatorio-box" id="relatorioBox">Carregando relatorio 12H...</div>
+<button onclick="carregarRelatorio()" style="margin-top:4px;background:#2a2e39;color:#00c853;border:1px solid #00c853;padding:3px;border-radius:3px;font-size:9px;width:100%">ATUALIZAR RELATORIO</button>
+<button onclick="enviarWhatsapp()" style="margin-top:2px;background:#00c853;color:#000;border:none;padding:3px;border-radius:3px;font-size:9px;width:100%;font-weight:900">ENVIAR WHATSAPP</button>
+</div>
+</div>
+<script>
+let ATIVO=localStorage.getItem('JARVIS_ATIVO')||'XAUUSDm';let TF=localStorage.getItem('JARVIS_TF')||'M15';let FLAG_ATUAL='FULL';let FILTRO_ATUAL='ALL';let SCANNER_DADOS=[];
+function tfToTV(tf){const m={"M1":"1","M5":"5","M15":"15","M30":"30","H1":"60","H4":"240","D1":"D"};return m[tf]||"15";}
+function trocarTF(t){TF=t;localStorage.setItem('JARVIS_TF',t);document.querySelectorAll('.tf-btn').forEach(b=>b.classList.toggle('active',b.dataset.tf===t));document.getElementById('tfInfo').textContent=t;document.getElementById('tfLabelSide').textContent=t;carregarGrafico();}
+function tvSymbol(m){let c=m.replace('m','');const map={"XAUUSD":"OANDA:XAUUSD","BTCUSD":"BINANCE:BTCUSD","ETHUSD":"BINANCE:ETHUSD","EURUSD":"FX:EURUSD","GBPUSD":"FX:GBPUSD","US30":"FOREXCOM:DJI","US500":"FOREXCOM:SPX500","USTEC":"NASDAQ:NDX","UK100":"FOREXCOM:UKX","DE30":"XETR:DAX"};if(map[c])return map[c];if(c.length>=6)return"FX:"+c.substring(0,6);return"OANDA:XAUUSD";}
+function carregarGrafico(){document.getElementById('tv_chart').innerHTML="";document.getElementById('ativoLabel').textContent=ATIVO;new TradingView.widget({"autosize":true,"symbol":tvSymbol(ATIVO),"interval":tfToTV(TF),"timezone":"America/Sao_Paulo","theme":"dark","style":"1","locale":"br","backgroundColor":"#000000","container_id":"tv_chart"});}
+function selecionarAtivo(a){ATIVO=a;localStorage.setItem('JARVIS_ATIVO',a);document.getElementById('ativoSel').value=a;carregarGrafico();loopAnalysis();}
+function trocarModo(){fetch('/set_modo?modo='+document.getElementById('modo').value);}
+function mudarAtivo(){ATIVO=document.getElementById('ativoSel').value;localStorage.setItem('JARVIS_ATIVO',ATIVO);carregarGrafico();}
+function toggleBot(){fetch('/bot/toggle').then(r=>r.json()).then(d=>{let b=document.getElementById('botBtn');b.textContent=d.status;b.className=d.ativo?'btn-toggle on':'btn-toggle off';document.getElementById('botStatusText').textContent=d.ativo?'LIGADO':'DESLIGADO';});}
+function classificarTipo(s){let x=s.replace('m','');const ind=["US500","US30","AUS200","DE30","FR40","HK50","JP225","STOXX50","UK100","USTEC","IN50","USOIL","NAS100","GER40"];const cry=["BTCUSD","ETHUSD","SOLUSD","BNBUSD","XRPUSD","DOGEUSD","LTCUSD","LINKUSD","ADAUSD","MATICUSD","BCHUSD","DOTUSD","UNIUSD","AVAXUSD","ATOMUSD","ETCUSD","XLMUSD","TRXUSD","NEARUSD","APTUSD"];if(ind.includes(x))return"INDICE";if(cry.includes(x))return"CRYPTO";return"FOREX";}
+function filtrar(t){FILTRO_ATUAL=t;document.querySelectorAll('.filtro').forEach(b=>b.classList.remove('active'));document.getElementById('f'+t).classList.add('active');renderScanner();}
+function renderScanner(){let lista=SCANNER_DADOS;if(FILTRO_ATUAL==='FOREX')lista=lista.filter(a=>classificarTipo(a.symbol)==='FOREX');else if(FILTRO_ATUAL==='INDICE')lista=lista.filter(a=>classificarTipo(a.symbol)==='INDICE');else if(FILTRO_ATUAL==='CRYPTO')lista=lista.filter(a=>classificarTipo(a.symbol)==='CRYPTO');else if(FILTRO_ATUAL==='SINAL')lista=lista.filter(a=>a.signal==='BUY'||a.signal==='SELL');let html="";lista.forEach(a=>{let cor=a.guard>=80?'#00c853':'#ff9800';let tipo=classificarTipo(a.symbol);let tCor=tipo==='FOREX'?'#2962ff':tipo==='INDICE'?'#ffab00':'#00e676';html+=`<div class="report-item" onclick="selecionarAtivo('${a.symbol}')"><span><span style="color:${tCor}">${tipo[0]}</span> ${a.symbol} <span style="color:${cor}">${a.guard}</span></span><span style="color:${a.signal==='BUY'?'#00c853':'#ff3d57'}">${a.signal||'--'}</span></div>`;});document.getElementById('scanner').innerHTML=html;document.getElementById('ativosCount').textContent=lista.length+'/'+SCANNER_DADOS.length;}
+function carregarAtivos(){fetch('/assets').then(r=>r.json()).then(lista=>{let sel=document.getElementById('ativoSel');sel.innerHTML="";lista.forEach(s=>{let o=document.createElement('option');o.value=s;o.textContent=s;if(s===ATIVO)o.selected=true;sel.appendChild(o);});});fetch('/flag').then(r=>r.json()).then(f=>{FLAG_ATUAL=f.flag;document.getElementById('flagInfo').textContent=f.flag+' - '+f.total+' ATIVOS';document.getElementById('flagInfo').style.background=f.flag==='CRYPTO_WEEKEND'?'#ff9800':'#00c853';document.getElementById('headerTitle').textContent='JARVIS V10 - '+f.flag;document.getElementById('fALL').textContent=`ALL ${f.total}`;document.getElementById('fFOREX').textContent=`FOREX ${f.forex}`;document.getElementById('fINDICE').textContent=`INDICE ${f.indices}`;document.getElementById('fCRYPTO').textContent=`CRYPTO ${f.crypto}`;});}
+function carregarBanca(){fetch('/account').then(r=>r.json()).then(c=>{document.getElementById('bancaValor').textContent=`$ ${c.balance.toFixed(2)}`;document.getElementById('equityValor').textContent=`$ ${c.equity.toFixed(2)}`;document.getElementById('profitHoje').textContent=`$ ${c.profit.toFixed(2)}`;document.getElementById('accountHeader').textContent=`$ ${c.equity.toFixed(2)} | ${c.profit.toFixed(2)}`;document.getElementById('margemValor').textContent=c.margin_level.toFixed(0)+'%';});}
+function carregarScanner(){fetch('/analysis_all').then(r=>r.json()).then(l=>{SCANNER_DADOS=l;renderScanner();});}
+function loopAnalysis(){fetch(`/analysis?symbol=${ATIVO}&timeframe=${TF}`).then(r=>r.json()).then(d=>{document.getElementById('score').textContent=d.guard+'/100 - '+d.guard_status;document.getElementById('signal').textContent=d.signal;document.getElementById('conf').textContent=d.confidence+'%';}).catch(()=>{});}
+function carregarPosicoes(){fetch('/positions').then(r=>r.json()).then(l=>{document.getElementById('posCount').textContent=l.length;let h="";l.forEach(p=>{h+=`<div style="display:flex;justify-content:space-between;background:#2a2e39;padding:3px 6px;border-radius:4px;margin:2px 0;font-size:9px"><span>${p.symbol} ${p.profit}</span><button onclick="fecharOrdem(${p.ticket})" style="background:#ff3d57;color:#fff;border:none;border-radius:3px;padding:1px 5px">X</button></div>`;});document.getElementById('ordens').innerHTML=h||'Nenhuma';});}
+function fecharOrdem(t){fetch('/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket:t})}).then(()=>carregarPosicoes());}
+function enviarTrade(a){fetch('/trade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:ATIVO,action:a,lot:document.getElementById('lote').value})}).then(r=>r.json()).then(d=>{if(!d.ok)alert(d.error);else carregarRelatorio();});}
+function carregarRelatorio(){fetch('/report/daily').then(r=>r.json()).then(d=>{document.getElementById('relatorioBox').textContent=d.texto_v10||d.texto;});}
+function enviarWhatsapp(){fetch('/report/send').then(r=>r.json()).then(d=>alert(d.ok?'Relatorio enviado WhatsApp':'Erro WhatsApp'));}
+
+fetch('/flag').then(r=>r.json()).then(()=>{carregarAtivos();trocarTF(TF);carregarGrafico();});
+setInterval(carregarBanca,2000);
+setInterval(carregarScanner,5000);
+setInterval(loopAnalysis,3000);
+setInterval(carregarPosicoes,3000);
+setInterval(carregarRelatorio,10000);
+carregarBanca();carregarScanner();loopAnalysis();carregarPosicoes();carregarRelatorio();
+</script>
+</body>
+</html>

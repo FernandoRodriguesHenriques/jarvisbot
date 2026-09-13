@@ -1,0 +1,335 @@
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+import MetaTrader5 as mt5
+from collections import deque
+import datetime, time, threading
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+app = Flask(__name__)
+CORS(app)
+mt5.initialize()
+BOT_ATIVO = True
+MODO_ATUAL = "conservadora"
+SPREAD_LIMITES = {"conservadora": 80, "agressiva": 300}
+MAX_POR_ATIVO = 1
+MAX_TOTAL = 3
+COOLDOWN = 300
+STOP_DIARIO = -50.0
+MAX_TRADES_DIA = 15
+ULTIMO = {}
+TRADES_HOJE = 0
+DATA_HOJE = datetime.date.today().isoformat()
+price_history = {}
+ATIVOS = ["XAUUSDm", "BTCUSDm", "EURUSDm", "GBPUSDm", "US30m", "NAS100m", "USDJPYm"]
+PADROES_12 = ["HAMMER","DOJI","ENGULFING_BULL","ENGULFING_BEAR","MARUBOZU","INSIDE_BAR","HARAMI","PIERCING","THREE_SOLDIERS","HANGING_MAN","INVERTED_HAMMER","HARAMI_CROSS"]
+DB = "jarvis_memory.db"
+def init_db():
+    import sqlite3
+    con = sqlite3.connect(DB)
+    cur = con.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS trade_memory (id INTEGER PRIMARY KEY AUTOINCREMENT, ticket INTEGER, symbol TEXT, pattern TEXT, direction TEXT, entry REAL, exit REAL, volume REAL, profit REAL, result TEXT, timestamp TEXT)")
+    cur.execute("CREATE TABLE IF NOT EXISTS pattern_stats (pattern TEXT, symbol TEXT, trades INTEGER, wins INTEGER, losses INTEGER, win_rate REAL, PRIMARY KEY (pattern, symbol))")
+    for pat in PADROES_12:
+        for sym in ATIVOS:
+            cur.execute("INSERT OR IGNORE INTO pattern_stats VALUES (?,?,?,?,?,?)",(pat,sym,0,0,0,0.0))
+    con.commit();con.close()
+init_db()
+def get_conta():
+    try: return mt5.account_info()
+    except: return None
+def pode_operar(symbol):
+    global TRADES_HOJE, DATA_HOJE
+    if not BOT_ATIVO:
+        return False, "BLOQUEADO: Bot DESLIGADO"
+    hoje = datetime.date.today().isoformat()
+    if hoje!= DATA_HOJE:
+        DATA_HOJE = hoje; TRADES_HOJE = 0; ULTIMO.clear()
+    pos = mt5.positions_get()
+    if pos and len(pos) >= MAX_TOTAL:
+        return False, f"BLOQUEADO: Total {len(pos)}/{MAX_TOTAL}"
+    if symbol:
+        pos_sym = [p for p in (pos or []) if p.symbol == symbol]
+        if len(pos_sym) >= MAX_POR_ATIVO:
+            return False, f"BLOQUEADO: {symbol} ja tem {len(pos_sym)}"
+        ultimo = ULTIMO.get(symbol,0)
+        rest = COOLDOWN - (time.time()-ultimo)
+        if ultimo!=0 and rest>0:
+            return False, f"BLOQUEADO: Cooldown {int(rest)}s"
+    conta = get_conta()
+    if conta:
+        if conta.profit <= STOP_DIARIO:
+            return False, f"BLOQUEADO: Stop {conta.profit}"
+        if conta.margin_level and conta.margin_level < 150:
+            return False, f"BLOQUEADO: Margem {conta.margin_level:.0f}%"
+    if TRADES_HOJE >= MAX_TRADES_DIA:
+        return False, "BLOQUEADO: Max trades"
+    return True, "LIBERADO"
+def ema_calc(data, period):
+    if len(data) < period: return data[-1] if data else 0
+    k = 2/(period+1)
+    e = sum(data[:period])/period
+    for p in data[period:]: e = p*k + e*(1-k)
+    return e
+def detect_patterns(closes):
+    if len(closes) < 5: return []
+    o=closes[-2];c=closes[-1];h=max(closes[-3:]);l=min(closes[-3:])
+    body=abs(c-o);amp=h-l if h!=l else 0.0001
+    res=[]
+    if body < amp*0.3 and (o-l)>body*1.5: res.append("HAMMER")
+    if body < amp*0.1: res.append("DOJI")
+    if c>o and closes[-2]<closes[-3]: res.append("ENGULFING_BULL")
+    if c<o and closes[-2]>closes[-3]: res.append("ENGULFING_BEAR")
+    if body > amp*0.8: res.append("MARUBOZU")
+    return res
+def executar_ordem(symbol, action, lot):
+    global TRADES_HOJE
+    liberado,msg=pode_operar(symbol)
+    if not liberado:
+        print(f"NEGADO {symbol} {msg}")
+        return None, msg
+    mt5.symbol_select(symbol, True)
+    tick=mt5.symbol_info_tick(symbol)
+    if not tick:
+        return None, "Sem tick"
+    price=tick.ask if action=='buy' else tick.bid
+    otype=mt5.ORDER_TYPE_BUY if action=='buy' else mt5.ORDER_TYPE_SELL
+    req={"action":mt5.TRADE_ACTION_DEAL,"symbol":symbol,"volume":lot,"type":otype,"price":price,"deviation":100,"magic":6502026,"comment":f"JARVIS AUTO {MODO_ATUAL}","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC}
+    res=mt5.order_send(req)
+    if not res or res.retcode!=mt5.TRADE_RETCODE_DONE:
+        req["type_filling"]=mt5.ORDER_FILLING_RETURN
+        res=mt5.order_send(req)
+    if res and res.retcode==mt5.TRADE_RETCODE_DONE:
+        TRADES_HOJE+=1
+        ULTIMO[symbol]=time.time()
+        print(f"OK ORDEM {symbol} {action} {lot} ticket {res.order}")
+        return res, "OK"
+    err = res.comment if res else "erro desconhecido"
+    print(f"FALHA {symbol} {action} {err}")
+    return None, err
+def loop_robo():
+    print("ROBO AUTO EMA 9/21 INICIADO - ALTERNANDO 7 ATIVOS")
+    while True:
+        try:
+            if not BOT_ATIVO:
+                time.sleep(2)
+                continue
+            pos = mt5.positions_get()
+            total = len(pos) if pos else 0
+            if total >= MAX_TOTAL:
+                time.sleep(3)
+                continue
+            for sym in ATIVOS:
+                if not BOT_ATIVO: break
+                mt5.symbol_select(sym, True)
+                tick = mt5.symbol_info_tick(sym)
+                info = mt5.symbol_info(sym)
+                if not tick or not info: continue
+                spread = int((tick.ask - tick.bid)/info.point) if info.point else 999
+                limite = SPREAD_LIMITES[MODO_ATUAL]
+                guard = 100 if spread <= limite else 60 if MODO_ATUAL=="conservadora" else 75
+                if guard < 60: continue
+                key = f"{sym}_1"
+                if key not in price_history: price_history[key]=deque(maxlen=200)
+                price_history[key].append(tick.bid)
+                closes=list(price_history[key])
+                if len(closes)<30: continue
+                ema9=ema_calc(closes,9)
+                ema21=ema_calc(closes,21)
+                patterns=detect_patterns(closes)
+                if not patterns: continue
+                liberado,msg=pode_operar(sym)
+                if not liberado: continue
+                action = 'buy' if ema9>ema21 else 'sell'
+                print(f"SINAL EMA {sym} {action} EMA9 {ema9:.2f} EMA21 {ema21:.2f} {patterns} guard {guard}")
+                lot = 0.10 if MODO_ATUAL=="conservadora" else 0.20
+                executar_ordem(sym, action, lot)
+                time.sleep(2)
+            time.sleep(3)
+        except Exception as e:
+            print(f"ERRO LOOP {e}")
+            time.sleep(3)
+threading.Thread(target=loop_robo, daemon=True).start()
+@app.route('/')
+def home(): return send_from_directory('.', 'index.html')
+@app.route('/assets')
+def assets(): return jsonify(ATIVOS)
+@app.route('/account')
+def account():
+    conta = get_conta()
+    if not conta: return jsonify({"balance":0,"equity":0,"profit":0,"margin_level":0,"free_margin":0})
+    return jsonify({"balance":round(conta.balance,2),"equity":round(conta.equity,2),"profit":round(conta.profit,2),"margin_level":round(conta.margin_level,2) if conta.margin_level else 0,"free_margin":round(conta.margin_free,2) if conta.margin_free else 0})
+@app.route('/bot/toggle')
+def bot_toggle():
+    global BOT_ATIVO
+    BOT_ATIVO = not BOT_ATIVO
+    print(f"BOT {'LIGADO' if BOT_ATIVO else 'DESLIGADO'}")
+    return jsonify({"ativo": BOT_ATIVO, "status": "ON" if BOT_ATIVO else "OFF"})
+@app.route('/bot/status')
+def bot_status(): return jsonify({"ativo": BOT_ATIVO, "status": "ON" if BOT_ATIVO else "OFF"})
+@app.route('/set_modo')
+def set_modo():
+    global MODO_ATUAL
+    MODO_ATUAL = request.args.get('modo','conservadora')
+    return jsonify({"modo":MODO_ATUAL})
+@app.route('/brain/reset', methods=['POST'])
+def brain_reset():
+    try:
+        import sqlite3
+        con=sqlite3.connect(DB)
+        cur=con.cursor()
+        cur.execute("DELETE FROM trade_memory")
+        cur.execute("DELETE FROM pattern_stats")
+        for pat in PADROES_12:
+            for sym in ATIVOS:
+                cur.execute("INSERT OR IGNORE INTO pattern_stats VALUES (?,?,?,?,?,?)",(pat,sym,0,0,0,0.0))
+        con.commit();con.close()
+        global TRADES_HOJE, ULTIMO
+        TRADES_HOJE=0
+        ULTIMO.clear()
+        print("BRAIN RESETADO - COMECANDO DO ZERO")
+        return jsonify({"ok":True})
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),500
+@app.route('/analysis')
+def analysis():
+    symbol = request.args.get('symbol','XAUUSDm').split('?')[0].strip()
+    mt5.symbol_select(symbol, True)
+    tick = mt5.symbol_info_tick(symbol)
+    info = mt5.symbol_info(symbol)
+    if not tick:
+        return jsonify({"symbol":symbol,"price":0,"signal":"AGUARDAR","confidence":0,"reason":"Sem tick","guard":0,"guard_status":"ERRO","spread":0,"patterns":[],"ema9":0,"ema21":0,"ema_signal":"--"})
+    spread = int((tick.ask - tick.bid)/info.point) if info and info.point else 999
+    limite = SPREAD_LIMITES[MODO_ATUAL]
+    guard = 100 if spread <= limite else 60 if MODO_ATUAL=="conservadora" else 75
+    guard_status = "SEGURO" if spread <= limite else "ATENCAO" if MODO_ATUAL=="conservadora" else "LIBERADO"
+    key = f"{symbol}_1"
+    if key not in price_history: price_history[key]=deque(maxlen=200)
+    price_history[key].append(tick.bid)
+    closes=list(price_history[key])
+    if len(closes)<20:
+        return jsonify({"symbol":symbol,"price":round(tick.bid,3),"signal":"AGUARDAR","confidence":0,"reason":f"Coletando {len(closes)}/20","guard":guard,"guard_status":guard_status,"spread":spread,"patterns":[],"trades_hoje":TRADES_HOJE,"bot":BOT_ATIVO,"ema9":0,"ema21":0,"ema_signal":"COLETANDO"})
+    ema9=ema_calc(closes,9);ema21=ema_calc(closes,21)
+    patterns=detect_patterns(closes)
+    liberado,msg=pode_operar(symbol)
+    signal="AGUARDAR";conf=0
+    ema_signal = "CALL" if ema9>ema21 else "PUT"
+    if liberado and patterns and guard>=60:
+        signal=ema_signal;conf=82
+    reason = msg if not liberado else (",".join(patterns) if patterns else "Aguardando padrao EMA")
+    return jsonify({"symbol":symbol,"price":round(tick.bid,3),"signal":signal,"confidence":conf,"reason":reason,"guard":guard,"guard_status":guard_status,"spread":spread,"patterns":patterns,"trades_hoje":TRADES_HOJE,"modo":MODO_ATUAL,"bot":BOT_ATIVO,"ema9":ema9,"ema21":ema21,"ema_signal":ema_signal})
+@app.route('/analysis_all')
+def analysis_all():
+    res=[]
+    for sym in ATIVOS:
+        try:
+            mt5.symbol_select(sym, True)
+            tick=mt5.symbol_info_tick(sym)
+            info=mt5.symbol_info(sym)
+            if not tick: continue
+            spread=int((tick.ask-tick.bid)/info.point) if info and info.point else 999
+            limite=SPREAD_LIMITES[MODO_ATUAL]
+            guard=100 if spread<=limite else 60 if MODO_ATUAL=="conservadora" else 75
+            status="SEGURO" if spread<=limite else "ATENCAO" if MODO_ATUAL=="conservadora" else "LIBERADO"
+            liberado,msg=pode_operar(sym)
+            key=f"{sym}_1"
+            closes=list(price_history.get(key,[]))
+            ema_sig="--"
+            if len(closes)>=21:
+                e9=ema_calc(closes,9); e21=ema_calc(closes,21)
+                ema_sig="CALL" if e9>e21 else "PUT"
+            res.append({"symbol":sym,"price":tick.bid,"spread":spread,"guard":guard,"guard_status":status,"liberado":liberado,"msg":msg,"ema_signal":ema_sig})
+        except: pass
+    return jsonify(res)
+@app.route('/positions')
+def positions():
+    pos=mt5.positions_get()
+    lista=[]
+    if pos:
+        for p in pos:
+            lista.append({"ticket":p.ticket,"symbol":p.symbol,"type":"buy" if p.type==0 else "sell","volume":p.volume,"profit":round(p.profit,2),"time":datetime.datetime.fromtimestamp(p.time).strftime("%H:%M:%S")})
+    return jsonify(lista)
+@app.route('/close', methods=['POST'])
+def close():
+    try:
+        d=request.get_json()
+        ticket=int(d.get('ticket'))
+        all_pos=mt5.positions_get()
+        if not all_pos: return jsonify({"ok":False,"error":"Nenhuma posicao"}),404
+        p=None
+        for pp in all_pos:
+            if pp.ticket==ticket: p=pp; break
+        if not p: return jsonify({"ok":False,"error":f"Ticket {ticket} nao encontrado"}),404
+        tick=mt5.symbol_info_tick(p.symbol)
+        if not tick: return jsonify({"ok":False,"error":"Sem tick"}),400
+        price=tick.bid if p.type==0 else tick.ask
+        otype=mt5.ORDER_TYPE_SELL if p.type==0 else mt5.ORDER_TYPE_BUY
+        req={"action":mt5.TRADE_ACTION_DEAL,"symbol":p.symbol,"volume":p.volume,"type":otype,"position":ticket,"price":price,"deviation":100,"magic":6502026,"comment":"JARVIS FECHAR","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC}
+        res=mt5.order_send(req)
+        if not res or res.retcode!=mt5.TRADE_RETCODE_DONE:
+            req["type_filling"]=mt5.ORDER_FILLING_RETURN
+            res=mt5.order_send(req)
+        if res and res.retcode==mt5.TRADE_RETCODE_DONE:
+            try:
+                import sqlite3
+                con=sqlite3.connect(DB)
+                cur=con.cursor()
+                cur.execute("INSERT INTO trade_memory (ticket,symbol,pattern,direction,entry,exit,volume,profit,result,timestamp) VALUES (?,?,?,?,?,?,?,?,?,?)",(ticket,p.symbol,"FECHAMENTO_MANUAL","buy" if p.type==0 else "sell",p.price_open,price,p.volume,p.profit,"WIN" if p.profit>0 else "LOSS",datetime.datetime.now().isoformat()))
+                con.commit();con.close()
+                print(f"FECHADO {ticket} {p.symbol} profit {p.profit}")
+            except Exception as ee: print(f"Erro salvar memoria {ee}")
+            return jsonify({"ok":True,"profit":p.profit})
+        err = res.comment if res else "erro MT5"
+        print(f"FALHA FECHAR {ticket} {err}")
+        return jsonify({"ok":False,"error":err}),400
+    except Exception as e:
+        print(f"EXCECAO CLOSE {e}")
+        return jsonify({"ok":False,"error":str(e)}),500
+@app.route('/trade', methods=['POST'])
+def trade():
+    if not BOT_ATIVO: return jsonify({"ok":False,"error":"Bot DESLIGADO"}),400
+    d=request.get_json()
+    symbol=d.get('symbol','XAUUSDm')
+    action=d.get('action','buy')
+    lot=float(d.get('lot',0.1))
+    res, msg = executar_ordem(symbol, action, lot)
+    if res: return jsonify({"ok":True,"ticket":res.order})
+    return jsonify({"ok":False,"error":msg}),400
+@app.route('/brain/status')
+def brain_status():
+    import sqlite3
+    con=sqlite3.connect(DB)
+    cur=con.cursor()
+    cur.execute("SELECT COUNT(*), SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END), SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END) FROM trade_memory")
+    total,wins,losses=cur.fetchone()
+    total=total or 0;wins=wins or 0;losses=losses or 0
+    wr=(wins/total*100) if total>0 else 0
+    con.close()
+    estado="NORMAL"
+    if losses>=3: estado="PROTECTION"
+    elif losses>=2: estado="CAUTION"
+    elif wins>=3: estado="PERFORMANCE"
+    return jsonify({"total":total,"wins":wins,"losses":losses,"win_rate":round(wr,2),"estado":estado})
+@app.route('/brain/trades')
+def brain_trades():
+    import sqlite3
+    con=sqlite3.connect(DB)
+    cur=con.cursor()
+    cur.execute("SELECT ticket,symbol,pattern,profit,result,timestamp FROM trade_memory ORDER BY id DESC LIMIT 50")
+    rows=cur.fetchall();con.close()
+    return jsonify([{"ticket":r[0],"symbol":r[1],"pattern":r[2],"profit":r[3],"result":r[4],"time":r[5]} for r in rows])
+@app.route('/report/12')
+def report12():
+    import sqlite3
+    con=sqlite3.connect(DB)
+    cur=con.cursor()
+    cur.execute("SELECT pattern,symbol,trades,wins,losses,win_rate FROM pattern_stats WHERE trades>0")
+    rows=cur.fetchall();con.close()
+    report={}
+    for pat,sym,tr,w,l,wr in rows:
+        if pat not in report: report[pat]=[]
+        report[pat].append({"symbol":sym,"trades":tr,"wins":w,"losses":l,"win_rate":wr})
+    return jsonify(report)
+if __name__=='__main__':
+    print("JARVIS V7 FINAL - EMA 9/21 + FECHAR CORRIGIDO + ROBO AUTO")
+    app.run(host='0.0.0.0', port=5000, debug=False)

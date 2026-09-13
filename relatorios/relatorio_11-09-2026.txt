@@ -1,0 +1,15 @@
+JARVIS V10 - RELATORIO 12H
+11/09/2026 23:59 - AGRESSIVA
+BANCA:
+Inicial: $ 10753.91
+Atual: $ 10689.97
+Equity: $ 10687.07
+Aberto: $ -2.90
+Lucro Hoje: $ -63.94
+HOJE:
+Wins: 0 | Loss: 0 | Total: 0
+Taxa Hoje: 0.0%
+TOTAL GERAL:
+Wins: 0 | Loss: 0 | Total: 0
+Win Rate: 0.0%
+Acumulado: $ 0.00
