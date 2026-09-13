@@ -1,0 +1,9 @@
+﻿data_lano/
+data/
+reports/
+relatorios/
+*.db
+*.csv
+*.xlsx
+*.txt
+!requirements.txt
